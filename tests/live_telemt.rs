@@ -14,6 +14,12 @@ use mtproto_remote::ssh::Session;
 use mtproto_remote::telemt::{Layout, NewConfig, config_toml};
 use serde_json::{Value, json};
 
+/// telemt answers a change with 200 once applied, or 202 while the hot reload
+/// that applies it is still pending; both are success.
+fn applied(status: u16) -> bool {
+    status == 200 || status == 202
+}
+
 fn free_port() -> u16 {
     std::net::TcpListener::bind("127.0.0.1:0")
         .unwrap()
@@ -152,15 +158,15 @@ async fn real_telemt_accepts_our_config_and_api_calls() {
         Some(json!({ "max_tcp_conns": null, "rate_limit_down_bps": 8_000_000 })),
     )
     .await;
-    assert_eq!(status, 200, "{patched}");
+    assert!(applied(status), "{patched}");
     assert_eq!(patched["data"]["max_tcp_conns"], Value::Null);
 
     for action in ["disable", "enable", "rotate-secret", "reset-quota"] {
         let (status, body) = call("POST", format!("/v1/users/alice/{action}"), None).await;
-        assert_eq!(status, 200, "{action}: {body}");
+        assert!(applied(status), "{action}: {body}");
     }
     let (status, body) = call("DELETE", "/v1/users/alice".into(), None).await;
-    assert!(status == 200 || status == 202, "{body}");
+    assert!(applied(status), "{body}");
 
     let (status, body) = call(
         "PATCH",
@@ -168,7 +174,7 @@ async fn real_telemt_accepts_our_config_and_api_calls() {
         Some(json!({ "censorship": { "tls_domain": "www.cloudflare.com" } })),
     )
     .await;
-    assert_eq!(status, 200, "{body}");
+    assert!(applied(status), "{body}");
     let (status, info) = call("GET", "/v1/system/info".into(), None).await;
     assert_eq!(status, 200);
     assert_eq!(info["data"]["version"], fetched.tag.trim_start_matches('v'));
