@@ -1,7 +1,15 @@
 # syntax=docker/dockerfile:1
 
+# The web page, built into one self-contained index.html.
+FROM --platform=$BUILDPLATFORM node:22-alpine AS web
+WORKDIR /web
+COPY web/package.json web/package-lock.json ./
+RUN npm ci --no-audit --no-fund
+COPY web/ ./
+RUN npm run build
+
 # Static musl binary, cross-compiled from the build platform with zig so the
-# build never runs under QEMU emulation.
+# build never runs under QEMU emulation. build.rs embeds the page.
 FROM --platform=$BUILDPLATFORM ghcr.io/rust-cross/cargo-zigbuild:latest AS build
 WORKDIR /app
 ARG TARGETARCH
@@ -20,8 +28,10 @@ RUN mkdir src \
     && cargo zigbuild --release --locked --target "$(cat /rust-target)" \
     && rm -rf src
 
+COPY build.rs ./
 COPY src ./src
-RUN touch src/* \
+COPY --from=web /web/dist ./web/dist
+RUN touch build.rs src/* \
     && cargo zigbuild --release --locked --target "$(cat /rust-target)" \
     && cp "target/$(cat /rust-target)/release/mtproto-remote" /mtproto-remote
 

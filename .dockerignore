@@ -3,3 +3,5 @@ data
 .git
 .github
 tests
+web/node_modules
+web/dist

@@ -14,10 +14,46 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test:
+  web:
     runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: web
     steps:
       - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - run: npm ci --no-audit --no-fund
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: web-dist
+          path: web/dist
+
+  rust:
+    runs-on: ubuntu-24.04
+    needs: web
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v7
+        with:
+          name: web-dist
+          path: web/dist
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -34,5 +70,5 @@ jobs:
       - name: Test
         run: cargo test --locked
 
-      - name: Live GitHub download
+      - name: Live tests (real GitHub release and real telemt)
         run: cargo test --locked -- --ignored
