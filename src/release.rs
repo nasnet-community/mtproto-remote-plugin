@@ -49,16 +49,16 @@ pub struct Asset {
     pub browser_download_url: String,
 }
 
-/// Maps `uname -m` output to the architecture names release assets use.
+/// telemt's static build for an architecture; `{arch}` is filled by [`release_arch`].
+pub const ASSET_PATTERN: &str = "telemt-{arch}-linux-musl.tar.gz";
+/// The executable inside the release archive.
+pub const BINARY: &str = "telemt";
+
+/// Maps `uname -m` output to the architecture names telemt releases use.
 pub fn release_arch(uname_m: &str) -> Result<&'static str, ReleaseError> {
     match uname_m.trim() {
-        "x86_64" | "amd64" => Ok("amd64"),
-        "aarch64" | "arm64" | "armv8l" => Ok("arm64"),
-        "armv7l" | "armv7" => Ok("armv7"),
-        "armv6l" => Ok("armv6"),
-        "i386" | "i686" => Ok("386"),
-        "mips" => Ok("mips"),
-        "mipsel" | "mipsle" => Ok("mipsle"),
+        "x86_64" | "amd64" => Ok("x86_64"),
+        "aarch64" | "arm64" => Ok("aarch64"),
         other => Err(ReleaseError::UnsupportedArch(other.to_string())),
     }
 }
@@ -243,7 +243,7 @@ mod tests {
     fn tarball(files: &[(&str, &[u8])]) -> Vec<u8> {
         let mut builder = tar::Builder::new(GzEncoder::new(Vec::new(), Compression::fast()));
         builder
-            .append_dir("mtg-2.2.8-linux-amd64", ".")
+            .append_dir("telemt-x86_64-linux-musl", ".")
             .expect("dir entry");
         for (path, data) in files {
             let mut header = tar::Header::new_gnu();
@@ -257,9 +257,9 @@ mod tests {
 
     #[test]
     fn maps_uname_to_release_arch() {
-        assert_eq!(release_arch("x86_64\n").unwrap(), "amd64");
-        assert_eq!(release_arch("aarch64").unwrap(), "arm64");
-        assert_eq!(release_arch("armv7l").unwrap(), "armv7");
+        assert_eq!(release_arch("x86_64\n").unwrap(), "x86_64");
+        assert_eq!(release_arch("aarch64").unwrap(), "aarch64");
+        assert!(release_arch("armv7l").is_err());
         assert!(release_arch("riscv64").is_err());
     }
 
@@ -280,30 +280,30 @@ mod tests {
     }
 
     #[test]
-    fn selects_the_plain_arch_build_from_mtg_assets() {
+    fn selects_the_baseline_static_build_from_telemt_assets() {
         let rel = release(&[
-            "mtg-2.2.8-checksums.txt",
-            "mtg-2.2.8-darwin-amd64.tar.gz",
-            "mtg-2.2.8-linux-amd64-v3.tar.gz",
-            "mtg-2.2.8-linux-amd64.tar.gz",
-            "mtg-2.2.8-linux-arm64-v9.0.tar.gz",
-            "mtg-2.2.8-linux-arm64.tar.gz",
+            "telemt-aarch64-linux-gnu.tar.gz",
+            "telemt-aarch64-linux-musl.tar.gz",
+            "telemt-aarch64-linux-musl.tar.gz.sha256",
+            "telemt-x86_64-linux-gnu.tar.gz",
+            "telemt-x86_64-linux-musl.tar.gz",
+            "telemt-x86_64-linux-musl.tar.gz.sha256",
+            "telemt-x86_64-v3-linux-musl.tar.gz",
         ]);
-        let pattern = Target::default().asset_pattern;
         assert_eq!(
-            select_asset(&rel, &pattern, "amd64").unwrap().name,
-            "mtg-2.2.8-linux-amd64.tar.gz"
+            select_asset(&rel, ASSET_PATTERN, "x86_64").unwrap().name,
+            "telemt-x86_64-linux-musl.tar.gz"
         );
         assert_eq!(
-            select_asset(&rel, &pattern, "arm64").unwrap().name,
-            "mtg-2.2.8-linux-arm64.tar.gz"
+            select_asset(&rel, ASSET_PATTERN, "aarch64").unwrap().name,
+            "telemt-aarch64-linux-musl.tar.gz"
         );
         assert!(matches!(
-            select_asset(&rel, &pattern, "mips"),
+            select_asset(&rel, ASSET_PATTERN, "armv7"),
             Err(ReleaseError::NoMatchingAsset { .. })
         ));
         assert!(matches!(
-            select_asset(&rel, "mtg-*-linux-{arch}*", "amd64"),
+            select_asset(&rel, "telemt-{arch}*", "x86_64"),
             Err(ReleaseError::AmbiguousAsset { .. })
         ));
     }
@@ -311,10 +311,10 @@ mod tests {
     #[test]
     fn extracts_the_named_binary_from_a_tarball() {
         let archive = tarball(&[
-            ("mtg-2.2.8-linux-amd64/README.md", b"docs"),
-            ("mtg-2.2.8-linux-amd64/mtg", b"\x7fELF-binary"),
+            ("telemt-x86_64-linux-musl/README.md", b"docs"),
+            ("telemt-x86_64-linux-musl/telemt", b"\x7fELF-binary"),
         ]);
-        let bin = extract_binary("mtg-2.2.8-linux-amd64.tar.gz", &archive, "mtg").unwrap();
+        let bin = extract_binary("telemt-x86_64-linux-musl.tar.gz", &archive, BINARY).unwrap();
         assert_eq!(bin, b"\x7fELF-binary");
         assert!(matches!(
             extract_binary("x.tar.gz", &archive, "other"),
@@ -333,7 +333,7 @@ mod tests {
     #[test]
     fn rejects_a_corrupt_tarball() {
         assert!(matches!(
-            extract_binary("x.tar.gz", b"not gzip", "mtg"),
+            extract_binary("x.tar.gz", b"not gzip", BINARY),
             Err(ReleaseError::Unpack { .. })
         ));
     }
@@ -341,14 +341,14 @@ mod tests {
     /// Hits the real GitHub API; run with `cargo test -- --ignored`.
     #[test]
     #[ignore]
-    fn live_mtg_release_downloads_and_unpacks() {
+    fn live_telemt_release_downloads_and_unpacks() {
         let target = Target::default();
         let github = GitHub::default();
         let rel = github.release(&target).unwrap();
-        let asset = select_asset(&rel, &target.asset_pattern, "amd64").unwrap();
+        let asset = select_asset(&rel, ASSET_PATTERN, "x86_64").unwrap();
         let bytes = github.download(asset).unwrap();
         assert_eq!(bytes.len() as u64, asset.size);
-        let bin = extract_binary(&asset.name, &bytes, &target.binary_name).unwrap();
+        let bin = extract_binary(&asset.name, &bytes, BINARY).unwrap();
         assert_eq!(&bin[..4], b"\x7fELF");
     }
 }

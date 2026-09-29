@@ -1,297 +1,195 @@
-//! End-to-end deployments against the in-process SSH server. Commands run in a
-//! local shell whose PATH starts with fake `sudo`, `id`, `uname`, `install` and
-//! `systemctl`, which write under a temp root instead of the real system.
+//! Installing telemt end to end against the fake server (see common/fake.rs).
 
 mod common;
 
-use std::fs;
-use std::os::unix::fs::PermissionsExt;
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::time::Duration;
+use common::fake::{BINARY, Fake, Options};
+use common::{HOST_FINGERPRINT, USER};
+use mtproto_remote::deploy::{Job, StepState, Tracker};
+use mtproto_remote::keys::authorized_line;
 
-use common::{HOST_FINGERPRINT, Login, PASSWORD, USER};
-use mtproto_remote::config::Target;
-use mtproto_remote::deploy::{Deployer, Fetched, Request, Source, StepState, Tracker};
-use mtproto_remote::hostkeys::{HostKeys, KeyStatus};
-use mtproto_remote::release::ReleaseError;
-
-const BINARY: &[u8] = b"\x7fELF fake mtg";
-const SECRET: &str = "ee0123456789abcdef0123456789abcdef676f6f676c652e636f6d";
-
-struct FakeSource;
-
-impl Source for FakeSource {
-    fn fetch(&self, _: &Target, arch: &str) -> Result<Fetched, ReleaseError> {
-        Ok(Fetched {
-            tag: "v2.2.8".into(),
-            asset: format!("mtg-2.2.8-linux-{arch}.tar.gz"),
-            binary: BINARY.to_vec(),
-        })
-    }
-}
-
-struct Fake {
-    root: PathBuf,
-}
-
-impl Drop for Fake {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.root);
-    }
-}
-
-#[derive(Clone, Copy)]
-struct Server {
-    uid: u32,
-    sudo_allowed: bool,
-    service_starts: bool,
-}
-
-impl Default for Server {
-    fn default() -> Self {
-        Self {
-            uid: 1000,
-            sudo_allowed: true,
-            service_starts: true,
-        }
-    }
-}
-
-fn script(dir: &Path, name: &str, body: &str) {
-    let path = dir.join(name);
-    fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
-    fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
-}
-
-impl Fake {
-    fn new(name: &str, server: Server) -> Fake {
-        let root =
-            std::env::temp_dir().join(format!("mtproto-remote-{name}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&root);
-        let bin = root.join("fakebin");
-        fs::create_dir_all(&bin).unwrap();
-
-        let sudo = if server.sudo_allowed {
-            format!(
-                r#"[ "$1 $2 $3" = "-S -p " ] || {{ echo "fake sudo: bad args $*" >&2; exit 2; }}
-shift 3
-IFS= read -r pw
-[ "$pw" = "{PASSWORD}" ] || {{ echo "Sorry, try again." >&2; exit 1; }}
-exec "$@""#
-            )
-        } else {
-            format!(r#"echo "{USER} is not in the sudoers file." >&2; exit 1"#)
-        };
-        script(&bin, "sudo", &sudo);
-        script(&bin, "id", &format!("echo {}", server.uid));
-        script(&bin, "uname", "echo x86_64");
-        script(
-            &bin,
-            "install",
-            r#"[ "$1" = -m ] || exit 2
-mkdir -p "$ROOT$(dirname "$4")" && cp "$3" "$ROOT$4" && chmod "$2" "$ROOT$4""#,
-        );
-        let active = if server.service_starts {
-            "echo active"
-        } else {
-            "echo failed; exit 3"
-        };
-        script(
-            &bin,
-            "systemctl",
-            &format!(
-                r#"echo "$*" >> "$ROOT/systemctl.log"
-case "$1" in
-  is-active) {active} ;;
-  status) echo "* $2.service - fake status" ;;
-esac
-exit 0"#
-            ),
-        );
-        Fake { root }
-    }
-
-    fn prelude(&self) -> String {
-        format!(
-            "export ROOT='{root}' PATH='{root}/fakebin':\"$PATH\"; ",
-            root = self.root.display()
-        )
-    }
-
-    fn read(&self, path: &str) -> Vec<u8> {
-        fs::read(self.root.join(path.trim_start_matches('/'))).unwrap_or_default()
-    }
-
-    fn deployer(&self) -> Deployer {
-        Deployer {
-            target: Target::default(),
-            source: Arc::new(FakeSource),
-            host_keys: HostKeys::new(self.root.join("data/known_hosts.json")),
-            settle: Duration::ZERO,
-        }
-    }
-}
-
-fn request(port: u16) -> Request {
-    Request {
-        host: "127.0.0.1".into(),
-        ssh_port: port,
-        username: USER.into(),
-        password: PASSWORD.into(),
-        fingerprint: HOST_FINGERPRINT.into(),
-        proxy_port: 443,
-        secret: SECRET.into(),
-    }
-}
-
-async fn run(name: &str, server: Server, edit: impl FnOnce(&mut Request)) -> (Fake, Tracker) {
-    let fake = Fake::new(name, server);
-    let port = common::start(Login::Password, &fake.prelude()).await;
-    let mut req = request(port);
+async fn install(fake: &Fake, edit: impl FnOnce(&mut mtproto_remote::deploy::Request)) -> Job {
+    let mut req = fake.request();
     edit(&mut req);
     let tracker = Tracker::default();
     tracker.start().unwrap();
     fake.deployer().run(req, &tracker).await;
-    (fake, tracker)
+    tracker.snapshot()
 }
 
-#[tokio::test]
-async fn deploys_through_sudo_and_starts_the_service() {
-    let (fake, tracker) = run("sudo", Server::default(), |_| {}).await;
-    let job = tracker.snapshot();
-
+fn assert_all_done(job: &Job) {
     assert_eq!(job.error, None, "{job:#?}");
     assert!(!job.running);
     assert!(
         job.steps.iter().all(|s| s.state == StepState::Done),
         "{job:#?}"
     );
-    assert_eq!(job.steps[1].detail, "x86_64 (amd64), systemd, sudo");
-    assert_eq!(job.steps[2].detail, "mtg-2.2.8-linux-amd64.tar.gz (v2.2.8)");
+}
+
+#[tokio::test]
+async fn installs_through_sudo_and_hands_over_to_the_router_key() {
+    let fake = Fake::new("sudo", Options::default()).await;
+    let job = install(&fake, |_| {}).await;
+    assert_all_done(&job);
+    assert_eq!(job.steps[1].detail, "x86_64, systemd, sudo");
     let report = job.report.unwrap();
-    assert!(report.active);
-    assert!(report.status.contains("mtg.service - fake status"));
+    assert!(!report.kept_config);
+    assert_eq!((report.users, report.release.as_str()), (1, "3.5.9"));
 
-    assert_eq!(fake.read("/usr/local/bin/mtg"), BINARY);
-    let unit = String::from_utf8(fake.read("/etc/systemd/system/mtg.service")).unwrap();
+    // Files in place.
     assert!(
-        unit.contains(&format!(
-            "\nExecStart=/usr/local/bin/mtg simple-run 0.0.0.0:443 {SECRET}\n"
-        )),
-        "{unit}"
+        fake.read("/usr/local/bin/telemt")
+            .starts_with(std::str::from_utf8(BINARY).unwrap())
     );
-    let log = String::from_utf8(fake.read("systemctl.log")).unwrap();
-    for call in [
-        "stop mtg",
-        "daemon-reload",
-        "enable mtg",
-        "restart mtg",
-        "is-active mtg",
-    ] {
-        assert!(
-            log.lines().any(|l| l == call),
-            "missing `{call}` in:\n{log}"
-        );
-    }
+    let conf = fake.read("/etc/telemt/telemt.toml");
+    assert!(conf.contains("\n\"first\" = \""), "{conf}");
+    assert!(conf.contains("\npublic_host = \"127.0.0.1\"\npublic_port = 443\n"));
+    assert!(
+        fake.read("/etc/systemd/system/telemt.service")
+            .contains("\nUser=telemt\n")
+    );
+    assert!(
+        fake.read("/usr/local/sbin/nasnet-telemt-ctl")
+            .starts_with("#!/bin/sh")
+    );
+    let rule = fake.read("/etc/sudoers.d/nasnet-telemt");
+    assert!(rule.contains(&format!(
+        "\n{USER} ALL=(root) NOPASSWD: {}\n",
+        fake.layout.ctl()
+    )));
+    assert_eq!(fake.read("/users"), "telemt\n");
+
+    // The router key was added and the server saved with the config's token.
+    assert!(fake.authorized_keys().contains(&authorized_line(&fake.key)));
+    let servers = fake.store.list();
+    assert_eq!(servers.len(), 1);
+    let server = &servers[0];
+    assert_eq!(server.id, report.server_id);
+    assert_eq!((server.name.as_str(), server.is_root), ("Test box", false));
+    assert_eq!(server.fingerprint, HOST_FINGERPRINT);
+    assert!(conf.contains(&format!("auth_header = \"Bearer {}\"", server.api_token)));
+
+    // Temp uploads were cleaned up.
+    let leftovers: Vec<_> = std::fs::read_dir("/tmp")
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.file_name()
+                .to_string_lossy()
+                .starts_with("nasnet-telemt.")
+        })
+        .collect();
+    assert!(leftovers.is_empty(), "{leftovers:?}");
 }
 
 #[tokio::test]
-async fn saves_the_confirmed_host_key_after_login() {
-    let fake = Fake::new("hostkey", Server::default());
-    let port = common::start(Login::Password, &fake.prelude()).await;
-    let tracker = Tracker::default();
-    tracker.start().unwrap();
-    fake.deployer().run(request(port), &tracker).await;
+async fn installs_as_root_without_a_sudoers_rule() {
+    let fake = Fake::new(
+        "root",
+        Options {
+            uid: 0,
+            sudo_allowed: false,
+            ..Options::default()
+        },
+    )
+    .await;
+    let job = install(&fake, |_| {}).await;
+    assert_all_done(&job);
+    assert_eq!(job.steps[1].detail, "x86_64, systemd, root");
+    assert!(!fake.exists("/etc/sudoers.d/nasnet-telemt"));
+    assert!(fake.store.list()[0].is_root);
+}
 
-    let keys = HostKeys::new(fake.root.join("data/known_hosts.json"));
+#[tokio::test]
+async fn reinstalling_keeps_the_existing_config_and_users() {
+    let fake = Fake::new("reinstall", Options::default()).await;
+    let first = install(&fake, |_| {}).await;
+    assert_all_done(&first);
+    let conf = fake.read("/etc/telemt/telemt.toml");
+    let token = fake.store.list()[0].api_token.clone();
+
+    let again = install(&fake, |r| r.tls_domain = "www.example.org".into()).await;
+    assert_all_done(&again);
+    assert!(again.report.unwrap().kept_config);
+    assert_eq!(fake.read("/etc/telemt/telemt.toml"), conf);
+    let servers = fake.store.list();
+    assert_eq!(servers.len(), 1, "reinstall must not add a second entry");
+    assert_eq!(servers[0].api_token, token);
     assert_eq!(
-        keys.status("127.0.0.1", port, HOST_FINGERPRINT),
-        KeyStatus::Known
+        fake.authorized_keys()
+            .matches(&authorized_line(&fake.key))
+            .count(),
+        1,
+        "the key must be added once"
     );
-}
-
-#[tokio::test]
-async fn deploys_as_root_without_sudo() {
-    let server = Server {
-        uid: 0,
-        sudo_allowed: false,
-        ..Server::default()
-    };
-    let (fake, tracker) = run("root", server, |_| {}).await;
-    let job = tracker.snapshot();
-    assert_eq!(job.error, None, "{job:#?}");
-    assert_eq!(job.steps[1].detail, "x86_64 (amd64), systemd, root");
-    assert_eq!(fake.read("/usr/local/bin/mtg"), BINARY);
 }
 
 #[tokio::test]
 async fn stops_before_installing_when_sudo_is_denied() {
-    let server = Server {
-        sudo_allowed: false,
-        ..Server::default()
-    };
-    let (fake, tracker) = run("nosudo", server, |_| {}).await;
-    let job = tracker.snapshot();
-
-    let error = job.error.unwrap();
-    assert!(error.contains("not in the sudoers file"), "{error}");
-    assert_eq!(job.steps.last().unwrap().title, "Check the server");
-    assert_eq!(job.steps.last().unwrap().state, StepState::Failed);
-    assert!(fake.read("/usr/local/bin/mtg").is_empty());
+    let fake = Fake::new(
+        "nosudo",
+        Options {
+            sudo_allowed: false,
+            ..Options::default()
+        },
+    )
+    .await;
+    let job = install(&fake, |_| {}).await;
+    assert!(job.error.unwrap().contains("not in the sudoers file"));
+    let last = job.steps.last().unwrap();
+    assert_eq!(
+        (last.title.as_str(), last.state),
+        ("Check the server", StepState::Failed)
+    );
+    assert!(!fake.exists("/usr/local/bin/telemt"));
+    assert!(fake.store.list().is_empty());
 }
 
 #[tokio::test]
 async fn refuses_to_log_in_when_the_host_key_changed() {
-    let (fake, tracker) = run("mismatch", Server::default(), |r| {
-        r.fingerprint = "SHA256:confirmed-earlier".into();
-    })
-    .await;
-    let job = tracker.snapshot();
-
+    let fake = Fake::new("mismatch", Options::default()).await;
+    let job = install(&fake, |r| r.fingerprint = "SHA256:confirmed-earlier".into()).await;
     assert!(job.error.unwrap().contains("refusing to continue"));
     assert_eq!(job.steps.len(), 1);
-    assert!(fake.read("/usr/local/bin/mtg").is_empty());
+    assert!(!fake.exists("/usr/local/bin/telemt"));
 }
 
 #[tokio::test]
-async fn reports_a_service_that_does_not_stay_up() {
-    let server = Server {
-        service_starts: false,
-        ..Server::default()
-    };
-    let (_fake, tracker) = run("down", server, |_| {}).await;
-    let job = tracker.snapshot();
-
-    assert_eq!(
-        job.error.as_deref(),
-        Some("mtg.service is not running; see its status below")
-    );
-    let report = job.report.unwrap();
-    assert!(!report.active);
-    assert!(report.status.contains("fake status"));
-    assert_eq!(job.steps.last().unwrap().state, StepState::Failed);
+async fn does_not_save_a_server_whose_api_never_answers() {
+    let fake = Fake::new(
+        "noapi",
+        Options {
+            api_up: false,
+            ..Options::default()
+        },
+    )
+    .await;
+    let job = install(&fake, |_| {}).await;
+    let error = job.error.unwrap();
+    assert!(error.contains("telemt's API did not come up"), "{error}");
+    assert_eq!(job.steps.last().unwrap().title, "Wait for telemt to answer");
+    assert!(fake.store.list().is_empty());
 }
 
-#[test]
-fn validates_the_form_before_connecting() {
-    let target = Target::default();
-    let ok = request(22);
-    assert_eq!(ok.validate(&target), Ok(()));
-
-    type Edit = fn(&mut Request);
-    let bad: [(&str, Edit); 6] = [
+#[tokio::test]
+async fn validates_the_form_before_connecting() {
+    let fake = Fake::new("validate", Options::default()).await;
+    let ok = fake.request();
+    assert_eq!(ok.validate(), Ok(()));
+    type Edit = fn(&mut mtproto_remote::deploy::Request);
+    let bad: [(&str, Edit); 8] = [
         ("host", |r| r.host = "bad host".into()),
         ("port", |r| r.ssh_port = 0),
         ("user", |r| r.username = "a b".into()),
         ("password", |r| r.password.clear()),
         ("fingerprint", |r| r.fingerprint.clear()),
-        ("secret", |r| r.secret = "ee$(reboot)".into()),
+        ("proxy port", |r| r.proxy_port = 0),
+        ("domain", |r| r.tls_domain = "localhost".into()),
+        ("first user", |r| r.first_user = "bad user".into()),
     ];
     for (what, edit) in bad {
         let mut req = ok.clone();
         edit(&mut req);
-        assert!(req.validate(&target).is_err(), "accepted bad {what}");
+        assert!(req.validate().is_err(), "accepted bad {what}");
     }
 }
 

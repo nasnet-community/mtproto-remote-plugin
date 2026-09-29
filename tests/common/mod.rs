@@ -7,6 +7,8 @@ use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Arc;
 
+pub mod fake;
+
 use russh::keys::{decode_secret_key, ssh_key};
 use russh::server::{self, Auth, Msg, Response, Server as _, Session};
 use russh::{Channel, ChannelId};

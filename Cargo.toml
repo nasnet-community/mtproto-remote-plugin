@@ -6,7 +6,7 @@ license = "MIT"
 description = "Deploy a GitHub release binary to a remote server over SSH as a systemd service"
 
 [dependencies]
-axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "tokio"] }
+axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "query", "tokio"] }
 flate2 = "1.1.10"
 russh = { version = "0.63.3", default-features = false, features = ["ring", "rsa"] }
 serde = { version = "1.0.229", features = ["derive"] }

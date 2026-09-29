@@ -11,12 +11,8 @@ pub enum ConfigError {
     InvalidBasePath(String),
     #[error("invalid GITHUB_REPO {0:?}: must be owner/name")]
     InvalidRepo(String),
-    #[error("invalid {0} {1:?}: use letters, digits, '.', '_' or '-'")]
-    InvalidName(&'static str, String),
-    #[error("invalid ASSET_PATTERN {0:?}: must be non-empty and contain no '/'")]
-    InvalidAssetPattern(String),
-    #[error("invalid EXEC_ARGS: must be a single line")]
-    InvalidExecArgs,
+    #[error("invalid RELEASE_TAG {0:?}")]
+    InvalidTag(String),
 }
 
 /// Runtime configuration, read from the environment the plugin manifest sets.
@@ -29,32 +25,20 @@ pub struct Config {
     pub target: Target,
 }
 
-/// What gets deployed to the remote server.
+/// Where the telemt release comes from.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Target {
-    /// GitHub repository, `owner/name`.
+    /// GitHub repository, `owner/name`; a fork or mirror of telemt.
     pub repo: String,
     /// Release tag to install; empty means the latest release.
     pub release_tag: String,
-    /// Glob over release asset names; `{arch}` expands to the server's arch.
-    pub asset_pattern: String,
-    /// Executable to take from an archive asset, installed as /usr/local/bin/<name>.
-    pub binary_name: String,
-    /// systemd unit name, without `.service`.
-    pub service_name: String,
-    /// Arguments for ExecStart; `{port}` and `{secret}` come from the form.
-    pub exec_args: String,
 }
 
 impl Default for Target {
     fn default() -> Self {
         Self {
-            repo: "9seconds/mtg".into(),
+            repo: "telemt/telemt".into(),
             release_tag: String::new(),
-            asset_pattern: "mtg-*-linux-{arch}.tar.gz".into(),
-            binary_name: "mtg".into(),
-            service_name: "mtg".into(),
-            exec_args: "simple-run 0.0.0.0:{port} {secret}".into(),
         }
     }
 }
@@ -74,25 +58,24 @@ pub fn from_lookup(get: impl Fn(&str) -> Option<String>) -> Result<Config, Confi
     };
     let defaults = Target::default();
 
-    let port = get("PORT", "8080");
-    let target = Target {
-        repo: validate_repo(get("GITHUB_REPO", &defaults.repo))?,
-        release_tag: get("RELEASE_TAG", ""),
-        asset_pattern: validate_pattern(get("ASSET_PATTERN", &defaults.asset_pattern))?,
-        binary_name: validate_name("BINARY_NAME", get("BINARY_NAME", &defaults.binary_name))?,
-        service_name: validate_name("SERVICE_NAME", get("SERVICE_NAME", &defaults.service_name))?,
-        exec_args: validate_exec_args(get("EXEC_ARGS", &defaults.exec_args))?,
-    };
-    if !target.release_tag.is_empty() && !is_safe_segment(&target.release_tag) {
-        return Err(ConfigError::InvalidName("RELEASE_TAG", target.release_tag));
+    let repo = get("GITHUB_REPO", &defaults.repo);
+    let valid_repo = matches!(repo.split_once('/'),
+        Some((owner, name)) if is_safe_segment(owner) && is_safe_segment(name));
+    if !valid_repo {
+        return Err(ConfigError::InvalidRepo(repo));
+    }
+    let release_tag = get("RELEASE_TAG", "");
+    if !release_tag.is_empty() && !is_safe_segment(&release_tag) {
+        return Err(ConfigError::InvalidTag(release_tag));
     }
 
+    let port = get("PORT", "8080");
     Ok(Config {
         host: get("HOST", "0.0.0.0"),
         port: port.parse().map_err(|_| ConfigError::InvalidPort(port))?,
         base_path: normalize_base_path(&get("BASE_PATH", ""))?,
         data_dir: PathBuf::from(get("DATA_DIR", "/data")),
-        target,
+        target: Target { repo, release_tag },
     })
 }
 
@@ -116,36 +99,6 @@ fn is_safe_segment(s: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '~'))
 }
 
-fn validate_repo(repo: String) -> Result<String, ConfigError> {
-    match repo.split_once('/') {
-        Some((owner, name)) if is_safe_segment(owner) && is_safe_segment(name) => Ok(repo),
-        _ => Err(ConfigError::InvalidRepo(repo)),
-    }
-}
-
-fn validate_name(key: &'static str, name: String) -> Result<String, ConfigError> {
-    let ok = is_safe_segment(&name) && !name.starts_with(['.', '-']);
-    if ok {
-        Ok(name)
-    } else {
-        Err(ConfigError::InvalidName(key, name))
-    }
-}
-
-fn validate_pattern(pattern: String) -> Result<String, ConfigError> {
-    if pattern.contains('/') || pattern.chars().any(char::is_whitespace) {
-        return Err(ConfigError::InvalidAssetPattern(pattern));
-    }
-    Ok(pattern)
-}
-
-fn validate_exec_args(args: String) -> Result<String, ConfigError> {
-    if args.contains(['\n', '\r']) {
-        return Err(ConfigError::InvalidExecArgs);
-    }
-    Ok(args)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -160,18 +113,18 @@ mod tests {
     }
 
     #[test]
-    fn defaults_deploy_mtg() {
+    fn defaults_install_latest_telemt() {
         let cfg = load(&[]).unwrap();
         assert_eq!(cfg.port, 8080);
         assert_eq!(cfg.base_path, "");
+        assert_eq!(cfg.data_dir, PathBuf::from("/data"));
         assert_eq!(cfg.target, Target::default());
     }
 
     #[test]
     fn blank_values_fall_back_to_defaults() {
-        let cfg = load(&[("GITHUB_REPO", "  "), ("EXEC_ARGS", "")]).unwrap();
-        assert_eq!(cfg.target.repo, "9seconds/mtg");
-        assert_eq!(cfg.target.exec_args, Target::default().exec_args);
+        let cfg = load(&[("GITHUB_REPO", "  "), ("RELEASE_TAG", "")]).unwrap();
+        assert_eq!(cfg.target, Target::default());
     }
 
     #[test]
@@ -187,15 +140,13 @@ mod tests {
     }
 
     #[test]
-    fn rejects_unsafe_target_values() {
-        assert!(load(&[("GITHUB_REPO", "mtg")]).is_err());
+    fn rejects_unsafe_values() {
+        assert!(load(&[("GITHUB_REPO", "telemt")]).is_err());
         assert!(load(&[("GITHUB_REPO", "a/b/c")]).is_err());
-        assert!(load(&[("SERVICE_NAME", "mtg;reboot")]).is_err());
-        assert!(load(&[("BINARY_NAME", "../mtg")]).is_err());
-        assert!(load(&[("BINARY_NAME", "-rf")]).is_err());
-        assert!(load(&[("ASSET_PATTERN", "a/b")]).is_err());
-        assert!(load(&[("EXEC_ARGS", "run\nExecStartPre=/bin/sh")]).is_err());
-        assert!(load(&[("RELEASE_TAG", "v1 2")]).is_err());
+        assert!(load(&[("RELEASE_TAG", "3.5.9 x")]).is_err());
+        assert!(load(&[("RELEASE_TAG", "..")]).is_err());
         assert!(load(&[("PORT", "http")]).is_err());
+        let pinned = load(&[("RELEASE_TAG", "3.5.9")]).unwrap();
+        assert_eq!(pinned.target.release_tag, "3.5.9");
     }
 }
