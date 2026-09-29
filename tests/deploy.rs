@@ -165,8 +165,14 @@ async fn does_not_save_a_server_whose_api_never_answers() {
     .await;
     let job = install(&fake, |_| {}).await;
     let error = job.error.unwrap();
-    assert!(error.contains("telemt's API did not come up"), "{error}");
-    assert_eq!(job.steps.last().unwrap().title, "Wait for telemt to answer");
+    assert!(
+        error.contains("the proxy did not start answering"),
+        "{error}"
+    );
+    assert_eq!(
+        job.steps.last().unwrap().title,
+        "Wait for the proxy to answer"
+    );
     assert!(fake.store.list().is_empty());
 }
 

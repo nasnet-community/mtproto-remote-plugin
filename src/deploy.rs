@@ -269,15 +269,14 @@ impl Deployer {
             if info.is_root { "root" } else { "sudo" }
         ));
 
-        t.begin(format!("Download telemt from {}", self.target.repo));
+        t.begin("Download the proxy");
         let (source, target) = (self.source.clone(), self.target.clone());
         let fetched = tokio::task::spawn_blocking(move || source.fetch(&target, arch))
             .await
             .map_err(|e| t.fail(e))?
             .map_err(|e| t.fail(e))?;
         t.done(format!(
-            "{} ({}, {:.1} MB)",
-            fetched.asset,
+            "Version {}, {:.1} MB",
             fetched.tag,
             fetched.binary.len() as f64 / 1e6
         ));
@@ -305,7 +304,7 @@ impl Deployer {
         .map_err(|e| t.fail(e))?;
         t.done("Key login works; the password is not kept");
 
-        t.begin("Wait for telemt to answer");
+        t.begin("Wait for the proxy to answer");
         let users = self.wait_for_api(&managed, &installed.api_token).await;
         managed.close().await;
         let users = users.map_err(|e| t.fail(e))?;
@@ -348,7 +347,7 @@ impl Deployer {
         temps: &mut Vec<String>,
         t: &Tracker,
     ) -> Result<crate::telemt::Installed, String> {
-        t.begin("Upload telemt and its files");
+        t.begin("Upload the proxy and its files");
         let config = config_toml(
             &self.layout,
             &NewConfig {
@@ -367,7 +366,7 @@ impl Deployer {
         };
         let uploads = async {
             Ok::<_, crate::telemt::RemoteError>(Uploads {
-                binary: upload("Uploading telemt", &fetched.binary).await?,
+                binary: upload("Uploading the proxy", &fetched.binary).await?,
                 config: upload("Uploading the config", config.as_bytes()).await?,
                 ctl: upload("Uploading the helper", ctl_script(&self.layout).as_bytes()).await?,
                 unit: upload(
@@ -391,7 +390,7 @@ impl Deployer {
         .map_err(|e| t.fail(e))?;
         t.done("");
 
-        t.begin("Install and start telemt");
+        t.begin("Install and start the proxy");
         let installed = remote.install(&uploads).await.map_err(|e| t.fail(e))?;
         t.done(if installed.kept_config {
             "Kept the existing configuration and its users"
@@ -416,7 +415,7 @@ impl Deployer {
                     return Ok(body["data"].as_array().map_or(0, Vec::len));
                 }
                 Ok(res) => format!(
-                    "telemt answered {}: {}",
+                    "the proxy answered {}: {}",
                     res.status,
                     String::from_utf8_lossy(&res.body)
                 ),
@@ -424,7 +423,7 @@ impl Deployer {
             };
             if tokio::time::Instant::now() >= deadline {
                 return Err(format!(
-                    "telemt's API did not come up ({last}). Check the service logs on the server."
+                    "the proxy did not start answering ({last}). Check its logs on the server."
                 ));
             }
             tokio::time::sleep(Duration::from_millis(500)).await;

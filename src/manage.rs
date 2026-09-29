@@ -23,7 +23,7 @@ use crate::telemt::{Layout, Remote, RemoteError, is_simple_name};
 pub enum ManageError {
     #[error("no such server")]
     NotFound,
-    #[error("that telemt API route is not allowed")]
+    #[error("that proxy API route is not allowed")]
     Forbidden,
     #[error(transparent)]
     Ssh(#[from] SshError),
@@ -160,9 +160,10 @@ impl Manager {
         if res.status == 200 && body["ok"] == true {
             Ok(body["data"].clone())
         } else {
-            Err(body["error"]["message"]
-                .as_str()
-                .map_or_else(|| format!("telemt answered {}", res.status), str::to_string))
+            Err(body["error"]["message"].as_str().map_or_else(
+                || format!("the proxy answered {}", res.status),
+                str::to_string,
+            ))
         }
     }
 
@@ -191,7 +192,7 @@ impl Manager {
         let server = self.server(id)?;
         let session = self.session(&server).await?;
         Remote::managed(&session, &self.layout, server.is_root)
-            .ctl(&format!("{action} telemt"), &[action])
+            .ctl(&format!("{action} the proxy"), &[action])
             .await?;
         Ok(())
     }
@@ -218,8 +219,10 @@ impl Manager {
             .map_err(|e| ManageError::Other(e.to_string()))??;
         let session = self.session(&server).await?;
         let remote = Remote::managed(&session, &self.layout, server.is_root);
-        let tmp = remote.upload("Uploading telemt", &fetched.binary).await?;
-        let result = remote.ctl("Updating telemt", &["update", &tmp]).await;
+        let tmp = remote
+            .upload("Uploading the proxy", &fetched.binary)
+            .await?;
+        let result = remote.ctl("Updating the proxy", &["update", &tmp]).await;
         remote.remove_temp(&[tmp]).await;
         result?;
         Ok(fetched.tag)
@@ -234,7 +237,7 @@ impl Manager {
             let session = self.session(&server).await?;
             let remote = Remote::managed(&session, &self.layout, server.is_root);
             if uninstall {
-                remote.ctl("Uninstalling telemt", &["uninstall"]).await?;
+                remote.ctl("Uninstalling the proxy", &["uninstall"]).await?;
             }
             remote.revoke_key(&authorized_line(&self.key)).await?;
             Ok::<_, ManageError>(())

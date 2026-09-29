@@ -493,7 +493,10 @@ impl<'a> Remote<'a> {
     /// Installs (or reinstalls) telemt and starts it.
     pub async fn install(&self, uploads: &Uploads) -> Result<Installed, RemoteError> {
         let out = self
-            .run_as_root("Installing telemt", &install_script(self.layout, uploads))
+            .run_as_root(
+                "Installing the proxy",
+                &install_script(self.layout, uploads),
+            )
             .await?;
         let lines: Vec<&str> = out.stdout.lines().map(str::trim).collect();
         let kept_config = lines.first() == Some(&"kept");
