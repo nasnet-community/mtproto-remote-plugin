@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Moon, Send, Sun } from 'lucide-react'
+import { Moon, Sun, TelegramMtprotoLogo } from './components/icons'
 import { api, type AppConfig } from './lib/api'
 import { useRoute } from './hooks/useRoute'
 import { Button } from './components/ui'
@@ -34,16 +34,14 @@ export function App() {
 
   return (
     <div className="min-h-screen">
-      <header className="sticky top-0 z-20 border-b border-border bg-background">
+      <header className="sticky top-0 z-20 border-b border-border bg-surface">
         <div className="mx-auto flex h-14 max-w-6xl items-center gap-3 px-4">
           <a href="#/" className="flex items-center gap-2.5 font-semibold">
-            <span className="grid h-8 w-8 place-items-center rounded-md tint-accent text-accent">
-              <Send className="h-4 w-4" />
-            </span>
+            <TelegramMtprotoLogo size={30} />
             MTProto Remote
           </a>
           <span className="hidden text-xs text-faint sm:inline">
-            telemt proxies on your own servers
+            MTProto proxies on your own servers
           </span>
           <div className="ml-auto flex items-center gap-1">
             {config && <span className="mr-2 text-xs text-faint">v{config.version}</span>}

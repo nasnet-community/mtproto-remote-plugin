@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { AlertTriangle } from 'lucide-react'
+import { TriangleAlert } from '../components/icons'
 import { users as usersApi, type AppConfig, type Server } from '../lib/api'
 import { Button, Card, CopyButton, ErrorBox, Field, Input, useToast } from '../components/ui'
 
@@ -43,7 +43,7 @@ function DisguiseCard({ server }: { server: Server }) {
         </p>
       </div>
       <div className="flex gap-3 rounded-md border border-status-warn p-3 tint-warn text-[13px]">
-        <AlertTriangle className="h-4 w-4 shrink-0 text-status-warn" />
+        <TriangleAlert className="h-4 w-4 shrink-0 text-status-warn" />
         Changing it changes every user's link: the old links stop working.
       </div>
       <div className="flex flex-wrap items-end gap-2">
@@ -91,14 +91,8 @@ export function SettingsTab({
             <span className="font-mono text-xs">{server.fingerprint}</span>
           </Row>
           <Row label="Architecture">{server.arch}</Row>
-          <Row label="telemt">{version ?? '–'}</Row>
+          <Row label="Proxy version">{version ?? '–'}</Row>
           <Row label="Added">{new Date(server.addedAt * 1000).toLocaleString()}</Row>
-          <Row label="Files">
-            <span className="font-mono text-xs">
-              /usr/local/bin/telemt, /etc/telemt/telemt.toml, /var/lib/telemt,
-              telemt.service, /usr/local/sbin/nasnet-telemt-ctl
-            </span>
-          </Row>
         </dl>
       </Card>
       {config && (

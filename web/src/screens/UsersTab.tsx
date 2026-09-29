@@ -1,16 +1,17 @@
 import { useMemo, useState } from 'react'
 import {
-  Gauge,
+  Activity,
+  Ellipsis,
   KeyRound,
-  MoreHorizontal,
   Plus,
-  RefreshCcw,
+  QrCode as QrCodeIcon,
+  RotateCcw,
   Search,
-  Share2,
+  SearchX,
   SlidersHorizontal,
   Trash2,
-  UserRound,
-} from 'lucide-react'
+  Users,
+} from '../components/icons'
 import { users as usersApi, type Server, type TelemtUser, type UserLimits } from '../lib/api'
 import {
   GB,
@@ -46,7 +47,7 @@ function expired(user: TelemtUser) {
   return !!user.expiration_rfc3339 && new Date(user.expiration_rfc3339).getTime() < Date.now()
 }
 
-// telemt does not report how much of a quota is used (its counter is separate
+// The proxy does not report how much of a quota is used (its counter is separate
 // from total traffic and resets independently), so show the two side by side.
 function Traffic({ user }: { user: TelemtUser }) {
   return (
@@ -248,7 +249,7 @@ function ShareDialog({ user, onClose }: { user: TelemtUser; onClose: () => void 
       description="Anyone with this link can use the proxy as this user."
     >
       {!link ? (
-        <ErrorBox>telemt has no link for this user yet. Try again in a few seconds.</ErrorBox>
+        <ErrorBox>The proxy has no link for this user yet. Try again in a few seconds.</ErrorBox>
       ) : (
         <div className="flex flex-col items-center gap-4">
           <QrCode text={toWebLink(link)} size={220} />
@@ -377,7 +378,7 @@ export function UsersTab({ server }: { server: Server }) {
   }
 
   const actions = (user: TelemtUser) => [
-    { label: 'Share link', icon: <Share2 />, onSelect: () => setModal({ kind: 'share', user }) },
+    { label: 'Share link', icon: <QrCodeIcon />, onSelect: () => setModal({ kind: 'share', user }) },
     {
       label: 'Edit limits',
       icon: <SlidersHorizontal />,
@@ -386,7 +387,7 @@ export function UsersTab({ server }: { server: Server }) {
     { label: 'New secret', icon: <KeyRound />, onSelect: () => setModal({ kind: 'rotate', user }) },
     {
       label: 'Reset quota',
-      icon: <RefreshCcw />,
+      icon: <RotateCcw />,
       onSelect: () => setModal({ kind: 'reset', user }),
     },
     {
@@ -434,7 +435,7 @@ export function UsersTab({ server }: { server: Server }) {
 
       {data && shown.length === 0 && (
         <Card className="flex flex-col items-center gap-2 px-6 py-10 text-center text-[13px] text-muted">
-          <UserRound className="h-6 w-6" />
+          {data.length === 0 ? <Users className="h-6 w-6" /> : <SearchX className="h-6 w-6" />}
           {data.length === 0 ? 'No users yet. Add one to get a proxy link.' : 'No user matches.'}
         </Card>
       )}
@@ -505,12 +506,12 @@ export function UsersTab({ server }: { server: Server }) {
                         variant="ghost"
                         onClick={() => setModal({ kind: 'share', user: u })}
                       >
-                        <Share2 className="h-4 w-4" /> Share
+                        <QrCodeIcon className="h-4 w-4" /> Share
                       </Button>
                       <Menu
                         trigger={
                           <Button size="icon" variant="ghost" aria-label={`Actions for ${u.username}`}>
-                            <MoreHorizontal className="h-4 w-4" />
+                            <Ellipsis className="h-4 w-4" />
                           </Button>
                         }
                         items={actions(u)}
@@ -538,7 +539,7 @@ export function UsersTab({ server }: { server: Server }) {
                   <Menu
                     trigger={
                       <Button size="icon" variant="ghost" aria-label={`Actions for ${u.username}`}>
-                        <MoreHorizontal className="h-4 w-4" />
+                        <Ellipsis className="h-4 w-4" />
                       </Button>
                     }
                     items={actions(u)}
@@ -546,7 +547,7 @@ export function UsersTab({ server }: { server: Server }) {
                 </div>
                 <div className="flex flex-wrap items-end gap-x-5 gap-y-2 text-xs text-muted">
                   <span className="inline-flex items-center gap-1">
-                    <Gauge className="h-3.5 w-3.5" /> {u.current_connections} conns
+                    <Activity className="h-3.5 w-3.5" /> {u.current_connections} conns
                   </span>
                   <span>{u.active_unique_ips} devices</span>
                   <span>

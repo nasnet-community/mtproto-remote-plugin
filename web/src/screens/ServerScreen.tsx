@@ -1,15 +1,15 @@
 import { useState } from 'react'
 import {
-  ArrowLeft,
+  ChevronLeft,
   Download,
-  FileText,
-  MoreHorizontal,
+  Ellipsis,
   Pencil,
-  Play,
-  RotateCw,
-  Square,
+  Power,
+  PowerOff,
+  RefreshCw,
+  ScrollText,
   Trash2,
-} from 'lucide-react'
+} from '../components/icons'
 import { api, type AppConfig, type Server } from '../lib/api'
 import { formatDuration } from '../lib/format'
 import { usePoll } from '../hooks/usePoll'
@@ -38,11 +38,11 @@ function LogsDialog({ server, onClose }: { server: Server; onClose: () => void }
       open
       wide
       onClose={onClose}
-      title={`telemt logs — ${server.name}`}
+      title={`Logs — ${server.name}`}
       description="The last 300 lines from the journal; refreshes every 10 seconds."
       footer={
         <Button onClick={() => void reload()} busy={loading}>
-          <RotateCw className="h-4 w-4" /> Refresh
+          <RefreshCw className="h-4 w-4" /> Refresh
         </Button>
       }
     >
@@ -92,9 +92,9 @@ function RemoveDialog({ server, onClose }: { server: Server; onClose: () => void
         <label className="flex gap-3 rounded-md border border-border p-3">
           <input type="radio" checked={uninstall} onChange={() => setUninstall(true)} />
           <span>
-            <b>Uninstall telemt</b>
+            <b>Uninstall the proxy</b>
             <span className="block text-muted">
-              Stops the proxy and deletes telemt, its config and every user from the server.
+              Stops the proxy and deletes it, its config and every user from the server.
               All links stop working.
             </span>
           </span>
@@ -104,7 +104,7 @@ function RemoveDialog({ server, onClose }: { server: Server; onClose: () => void
           <span>
             <b>Only remove from this list</b>
             <span className="block text-muted">
-              telemt keeps running with its users. Add the server again later to manage it.
+              The proxy keeps running with its users. Add the server again later to manage it.
             </span>
           </span>
         </label>
@@ -188,7 +188,7 @@ export function ServerScreen({
       <div className="flex flex-col items-start gap-3">
         <ErrorBox>That server is not in the list any more.</ErrorBox>
         <Button onClick={() => navigate({ page: 'servers' })}>
-          <ArrowLeft className="h-4 w-4" /> All servers
+          <ChevronLeft className="h-4 w-4" /> All servers
         </Button>
       </div>
     )
@@ -219,7 +219,7 @@ export function ServerScreen({
         onClick={() => navigate({ page: 'servers' })}
         className="inline-flex w-fit items-center gap-1.5 text-[13px] text-muted hover:text-foreground"
       >
-        <ArrowLeft className="h-4 w-4" /> All servers
+        <ChevronLeft className="h-4 w-4" /> All servers
       </button>
 
       <Card className="flex flex-col gap-4 p-4 sm:flex-row sm:items-center">
@@ -235,7 +235,7 @@ export function ServerScreen({
               {server.username}@{server.host}:{server.sshPort}
             </span>
             <span>proxy port {server.proxyPort}</span>
-            {info?.version && <span>telemt {info.version}</span>}
+            {info?.version && <span>version {info.version}</span>}
             {info?.uptime_seconds !== undefined && (
               <span>up {formatDuration(info.uptime_seconds)}</span>
             )}
@@ -247,47 +247,48 @@ export function ServerScreen({
               size="sm"
               busy={acting === 'stop'}
               disabled={!!acting}
-              onClick={() => act('stop', () => api.service(id, 'stop'), 'telemt stopped')}
+              className="enabled:hover:!border-status-danger enabled:hover:!bg-status-danger enabled:hover:!text-white"
+              onClick={() => act('stop', () => api.service(id, 'stop'), 'Proxy stopped')}
             >
-              <Square className="h-3.5 w-3.5" /> Stop
+              <PowerOff className="h-3.5 w-3.5" /> Stop
             </Button>
           ) : (
             <Button
               size="sm"
               busy={acting === 'start'}
               disabled={!!acting}
-              onClick={() => act('start', () => api.service(id, 'start'), 'telemt started')}
+              onClick={() => act('start', () => api.service(id, 'start'), 'Proxy started')}
             >
-              <Play className="h-3.5 w-3.5" /> Start
+              <Power className="h-3.5 w-3.5" /> Start
             </Button>
           )}
           <Button
             size="sm"
             busy={acting === 'restart'}
             disabled={!!acting}
-            onClick={() => act('restart', () => api.service(id, 'restart'), 'telemt restarted')}
+            onClick={() => act('restart', () => api.service(id, 'restart'), 'Proxy restarted')}
           >
-            <RotateCw className="h-3.5 w-3.5" /> Restart
+            <RefreshCw className="h-3.5 w-3.5" /> Restart
           </Button>
           <Button size="sm" onClick={() => setDialog('logs')}>
-            <FileText className="h-3.5 w-3.5" /> Logs
+            <ScrollText className="h-3.5 w-3.5" /> Logs
           </Button>
           <Menu
             trigger={
               <Button size="icon" aria-label="More actions" busy={acting === 'update'}>
-                <MoreHorizontal className="h-4 w-4" />
+                <Ellipsis className="h-4 w-4" />
               </Button>
             }
             items={[
               {
-                label: 'Update telemt',
+                label: 'Update proxy',
                 icon: <Download />,
                 onSelect: () =>
                   act(
                     'update',
                     async () => {
                       const res = await api.update(id)
-                      toast(`Updated to telemt ${res.release}`)
+                      toast(`Updated to version ${res.release}`)
                     },
                   ),
               },
@@ -311,7 +312,7 @@ export function ServerScreen({
         </ErrorBox>
       )}
       {status.data?.apiError && running && (
-        <ErrorBox>telemt is running but its API did not answer: {status.data.apiError}</ErrorBox>
+        <ErrorBox>The proxy is running but did not answer: {status.data.apiError}</ErrorBox>
       )}
 
       <div className="flex gap-1 border-b border-border">

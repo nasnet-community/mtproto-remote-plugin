@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ChevronRight, Plus, Server as ServerIcon, ShieldCheck, Users } from 'lucide-react'
+import { ChevronRight, Plus, TelegramMtprotoLogo, Users } from '../components/icons'
 import { api, type Server } from '../lib/api'
 import { formatDuration } from '../lib/format'
 import { usePoll } from '../hooks/usePoll'
@@ -39,7 +39,7 @@ function ServerCard({ server }: { server: Server }) {
             <Users className="h-3.5 w-3.5" />
             {status?.summary?.configured_users ?? '–'} users
           </span>
-          {status?.info?.version && <span>telemt {status.info.version}</span>}
+          {status?.info?.version && <span>v{status.info.version}</span>}
           {status?.info?.uptime_seconds !== undefined && (
             <span>up {formatDuration(status.info.uptime_seconds)}</span>
           )}
@@ -61,7 +61,7 @@ export function ServersScreen() {
         <div>
           <h1 className="text-xl font-semibold">Servers</h1>
           <p className="text-[13px] text-muted">
-            Each server runs its own telemt proxy with its own users.
+            Each server runs its own proxy with its own users.
           </p>
         </div>
         <Button variant="primary" onClick={() => setAdding(true)}>
@@ -74,20 +74,14 @@ export function ServersScreen() {
 
       {servers && servers.length === 0 && (
         <Card className="flex flex-col items-center gap-3 px-6 py-14 text-center">
-          <span className="grid h-12 w-12 place-items-center rounded-full tint-accent text-accent">
-            <ServerIcon className="h-6 w-6" />
-          </span>
+          <TelegramMtprotoLogo size={48} />
           <h2 className="text-base font-semibold">No servers yet</h2>
           <p className="max-w-md text-[13px] text-muted">
-            Add a Linux server you can reach over SSH. The router installs telemt on it, then
-            manages it with its own key; your password is used once and never stored.
+            Add a Linux server over SSH. Your password is used once, never stored.
           </p>
           <Button variant="primary" onClick={() => setAdding(true)}>
             <Plus className="h-4 w-4" /> Add your first server
           </Button>
-          <p className="mt-2 inline-flex items-center gap-1.5 text-xs text-faint">
-            <ShieldCheck className="h-3.5 w-3.5" /> systemd servers on x86_64 or arm64
-          </p>
         </Card>
       )}
 

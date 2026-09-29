@@ -9,11 +9,12 @@ import {
   useState,
   type ButtonHTMLAttributes,
   type InputHTMLAttributes,
+  type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
 } from 'react'
 import { createPortal } from 'react-dom'
 import qrcode from 'qrcode-generator'
-import { Check, Copy, Loader2, X } from 'lucide-react'
+import { Check, Copy, Loader, X } from './icons'
 
 export function cx(...classes: (string | false | null | undefined)[]) {
   return classes.filter(Boolean).join(' ')
@@ -21,11 +22,12 @@ export function cx(...classes: (string | false | null | undefined)[]) {
 
 type Variant = 'primary' | 'secondary' | 'ghost' | 'danger'
 
+// Mirrors nasnet-panel's Button.module.scss variants.
 const VARIANTS: Record<Variant, string> = {
-  primary: 'bg-accent text-accent-fg hover:brightness-110 border-transparent',
-  secondary: 'bg-card2 text-foreground hover:bg-track border-border-strong',
-  ghost: 'bg-transparent text-muted hover:text-foreground hover:bg-track border-transparent',
-  danger: 'bg-status-danger text-white hover:brightness-110 border-transparent',
+  primary: 'bg-accent text-accent-fg border-accent hover:bg-accent-strong',
+  secondary: 'bg-card2 text-foreground border-border hover:bg-surface hover:border-border-strong',
+  ghost: 'bg-transparent text-foreground border-transparent hover:bg-card2',
+  danger: 'bg-status-danger text-white border-status-danger hover:brightness-95',
 }
 
 export function Button({
@@ -47,7 +49,7 @@ export function Button({
       disabled={disabled || busy}
       className={cx(
         'inline-flex items-center justify-center gap-2 rounded-md border font-medium transition',
-        'focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent',
+        'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent',
         'disabled:cursor-not-allowed disabled:opacity-50',
         size === 'sm' && 'h-8 px-3 text-[13px]',
         size === 'md' && 'h-9 px-4',
@@ -57,7 +59,7 @@ export function Button({
       )}
       {...rest}
     >
-      {busy && <Loader2 className="h-4 w-4 animate-spin" />}
+      {busy && <Loader className="h-4 w-4 animate-spin" />}
       {children}
     </button>
   )
@@ -109,7 +111,7 @@ export function Field({
 
 export function Card({ className, children }: { className?: string; children: ReactNode }) {
   return (
-    <div className={cx('rounded-lg border border-border bg-card', className)}>{children}</div>
+    <div className={cx('rounded-lg border border-border bg-card shadow-sm', className)}>{children}</div>
   )
 }
 
@@ -158,7 +160,7 @@ export function Switch({
       className={cx(
         'relative h-5 w-9 shrink-0 rounded-full transition disabled:opacity-50',
         'focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent',
-        checked ? 'bg-accent' : 'bg-border-strong',
+        checked ? 'bg-status-online' : 'bg-border-strong',
       )}
     >
       <span
@@ -172,7 +174,7 @@ export function Switch({
 }
 
 export function Spinner({ className }: { className?: string }) {
-  return <Loader2 className={cx('h-4 w-4 animate-spin text-muted', className)} />
+  return <Loader className={cx('h-4 w-4 animate-spin text-muted', className)} />
 }
 
 export function Dialog({
@@ -211,14 +213,14 @@ export function Dialog({
   if (!open) return null
   return createPortal(
     <div className="fixed inset-0 z-40 flex items-end justify-center sm:items-center sm:p-4">
-      <div className="absolute inset-0 bg-black/60" onClick={onClose} />
+      <div className="absolute inset-0" style={{ background: 'var(--overlay)' }} onClick={onClose} />
       <div
         ref={panel}
         role="dialog"
         aria-modal="true"
         aria-label={title}
         className={cx(
-          'relative flex max-h-[92vh] w-full flex-col rounded-t-lg border border-border-strong bg-surface shadow-2xl sm:rounded-lg',
+          'relative flex max-h-[92vh] w-full flex-col rounded-t-lg border border-border bg-surface shadow-lg sm:rounded-lg',
           wide ? 'sm:max-w-3xl' : 'sm:max-w-md',
         )}
       >
@@ -251,50 +253,94 @@ export interface MenuItem {
 }
 
 export function Menu({ trigger, items }: { trigger: ReactNode; items: MenuItem[] }) {
-  const [open, setOpen] = useState(false)
-  const root = useRef<HTMLDivElement>(null)
+  const [pos, setPos] = useState<{ top: number; left: number; up: boolean } | null>(null)
+  const anchor = useRef<HTMLDivElement>(null)
+  const panel = useRef<HTMLDivElement>(null)
+  const open = pos !== null
+  const close = useCallback(() => setPos(null), [])
+
+  // The menu is portalled to <body> with fixed coordinates, so no card or
+  // table with overflow hidden can clip it.
+  const toggle = () => {
+    if (open) return close()
+    const r = anchor.current!.getBoundingClientRect()
+    const height = items.length * 36 + 10
+    const up = r.bottom + height + 8 > window.innerHeight && r.top > height + 8
+    const width = 200
+    setPos({
+      top: up ? r.top - 4 : r.bottom + 4,
+      left: Math.max(8, Math.min(r.right - width, window.innerWidth - width - 8)),
+      up,
+    })
+  }
+
   useEffect(() => {
     if (!open) return
     const onDown = (e: MouseEvent) => {
-      if (!root.current?.contains(e.target as Node)) setOpen(false)
+      const t = e.target as Node
+      if (!anchor.current?.contains(t) && !panel.current?.contains(t)) close()
     }
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false)
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && close()
     document.addEventListener('mousedown', onDown)
     document.addEventListener('keydown', onKey)
+    window.addEventListener('scroll', close, true)
+    window.addEventListener('resize', close)
+    panel.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus()
     return () => {
       document.removeEventListener('mousedown', onDown)
       document.removeEventListener('keydown', onKey)
+      window.removeEventListener('scroll', close, true)
+      window.removeEventListener('resize', close)
     }
-  }, [open])
+  }, [open, close])
+
+  const onMenuKey = (e: ReactKeyboardEvent) => {
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
+    e.preventDefault()
+    const buttons = [...panel.current!.querySelectorAll<HTMLElement>('[role="menuitem"]')]
+    const i = buttons.indexOf(document.activeElement as HTMLElement)
+    const next = (i + (e.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length
+    buttons[next]?.focus()
+  }
 
   return (
-    <div className="relative" ref={root}>
-      <div onClick={() => setOpen((o) => !o)}>{trigger}</div>
-      {open && (
-        <div
-          role="menu"
-          className="absolute right-0 z-30 mt-1 min-w-[190px] overflow-hidden rounded-md border border-border-strong bg-surface py-1 shadow-xl"
-        >
-          {items.map((item) => (
-            <button
-              key={item.label}
-              role="menuitem"
-              type="button"
-              onClick={() => {
-                setOpen(false)
-                item.onSelect()
-              }}
-              className={cx(
-                'flex w-full items-center gap-2.5 px-3 py-2 text-left text-[13px] hover:bg-track',
-                item.danger ? 'text-status-danger' : 'text-foreground',
-              )}
-            >
-              <span className="text-muted [&>svg]:h-4 [&>svg]:w-4">{item.icon}</span>
-              {item.label}
-            </button>
-          ))}
-        </div>
-      )}
+    <div className="relative" ref={anchor}>
+      <div onClick={toggle}>{trigger}</div>
+      {pos &&
+        createPortal(
+          <div
+            ref={panel}
+            role="menu"
+            onKeyDown={onMenuKey}
+            style={{
+              position: 'fixed',
+              left: pos.left,
+              top: pos.top,
+              transform: pos.up ? 'translateY(-100%)' : undefined,
+            }}
+            className="z-50 w-[200px] overflow-hidden rounded-md border border-border bg-surface py-1 shadow-lg"
+          >
+            {items.map((item) => (
+              <button
+                key={item.label}
+                role="menuitem"
+                type="button"
+                onClick={() => {
+                  close()
+                  item.onSelect()
+                }}
+                className={cx(
+                  'flex w-full items-center gap-2.5 px-3 py-2 text-left text-[13px] hover:bg-track focus:bg-track focus:outline-none',
+                  item.danger ? 'text-status-danger' : 'text-foreground',
+                )}
+              >
+                <span className="text-muted [&>svg]:h-4 [&>svg]:w-4">{item.icon}</span>
+                {item.label}
+              </button>
+            ))}
+          </div>,
+          document.body,
+        )}
     </div>
   )
 }
@@ -323,7 +369,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
             key={t.id}
             role="status"
             className={cx(
-              'pointer-events-auto rounded-md border px-4 py-3 text-[13px] shadow-xl',
+              'pointer-events-auto rounded-md border px-4 py-3 text-[13px] shadow-lg',
               t.tone === 'error'
                 ? 'border-danger-soft bg-surface text-status-danger'
                 : 'border-border-strong bg-surface text-foreground',

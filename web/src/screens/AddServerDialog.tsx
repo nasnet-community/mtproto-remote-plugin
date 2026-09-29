@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { AlertTriangle, CheckCircle2, Circle, KeyRound, XCircle } from 'lucide-react'
+import { Circle, CircleCheck, CircleX, KeyRound, TriangleAlert } from '../components/icons'
 import { api, type InstallRequest, type Job, type ProbeResult } from '../lib/api'
 import { USERNAME } from '../lib/format'
 import { Button, Dialog, ErrorBox, Field, Input, Spinner, cx } from '../components/ui'
@@ -24,8 +24,8 @@ function Progress({ job }: { job: Job }) {
         <li key={i} className="flex gap-3">
           <span className="mt-0.5">
             {step.state === 'running' && <Spinner className="text-accent" />}
-            {step.state === 'done' && <CheckCircle2 className="h-4 w-4 text-status-online" />}
-            {step.state === 'failed' && <XCircle className="h-4 w-4 text-status-danger" />}
+            {step.state === 'done' && <CircleCheck className="h-4 w-4 text-status-online" />}
+            {step.state === 'failed' && <CircleX className="h-4 w-4 text-status-danger" />}
           </span>
           <div className="min-w-0">
             <div className={cx(step.state === 'running' && 'font-medium')}>{step.title}</div>
@@ -199,12 +199,12 @@ export function AddServerDialog({
             ? job.error
               ? 'Installation failed'
               : 'Server added'
-            : 'Installing telemt'
+            : 'Installing the proxy'
           : 'Add a server'
       }
       description={
         stage === 'form'
-          ? 'The router logs in once with this password, installs telemt, and from then on uses its own SSH key.'
+          ? 'The router logs in once with this password, installs the proxy, and from then on uses its own SSH key.'
           : undefined
       }
       footer={footer}
@@ -253,7 +253,7 @@ export function AddServerDialog({
         <div className="flex flex-col gap-3">
           {key.status === 'changed' ? (
             <div className="flex gap-3 rounded-md border border-status-warn p-3 tint-warn">
-              <AlertTriangle className="h-5 w-5 shrink-0 text-status-warn" />
+              <TriangleAlert className="h-5 w-5 shrink-0 text-status-warn" />
               <p className="text-[13px]">
                 <b>{form.host}</b> shows a different key than last time. That happens after a
                 reinstall — or when someone is intercepting the connection.
@@ -286,7 +286,7 @@ export function AddServerDialog({
           {job?.error && <ErrorBox>{job.error}</ErrorBox>}
           {finished && job.report && !job.error && (
             <p className="text-[13px] text-muted">
-              telemt {job.report.release} is running with {job.report.users} user
+              The proxy ({job.report.release}) is running with {job.report.users} user
               {job.report.users === 1 ? '' : 's'}
               {job.report.keptConfig ? ' (existing configuration kept)' : ''}.
             </p>
