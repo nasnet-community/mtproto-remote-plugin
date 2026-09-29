@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
 import { viteSingleFile } from 'vite-plugin-singlefile'
@@ -12,4 +13,5 @@ export default defineConfig({
     proxy: { '/api': 'http://localhost:8080' },
   },
   build: { target: 'es2020', chunkSizeWarningLimit: 1024 },
+  test: { include: ['src/**/*.test.ts'] },
 })
