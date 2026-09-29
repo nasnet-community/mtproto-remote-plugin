@@ -153,7 +153,7 @@ test('changing the disguise domain changes every link', async ({ page }) => {
 
 test('settings show the server details and router key', async ({ page }) => {
   await openServer(page, 'fra1', 'settings')
-  await expect(page.getByText('root@203.0.113.10:22')).toBeVisible()
+  await expect(page.locator('dl').getByText('root@203.0.113.10:22')).toBeVisible()
   await expect(page.getByText('SHA256:p2OiwWbYoEAsmmYWEMy1L12ya7lUDzuHYODmtJ18R/w')).toBeVisible()
   await expect(page.getByText(/^ssh-ed25519 .* nasnet-mtproto-remote$/)).toBeVisible()
   await expect(page.getByRole('button', { name: 'Copy key' })).toBeVisible()

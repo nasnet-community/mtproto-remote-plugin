@@ -7,7 +7,9 @@ test('on a phone, users are cards and every action is reachable', async ({ page 
   await expect(alice).toContainText('devices')
   await page.getByRole('button', { name: 'Actions for alice' }).click()
   await page.getByRole('menuitem', { name: 'Share link' }).click()
-  await expect(dialog(page, "Share alice's proxy").getByRole('img')).toBeVisible()
+  await expect(
+    dialog(page, "Share alice's proxy").getByRole('img', { name: 'QR code of the proxy link' }),
+  ).toBeVisible()
   await page.keyboard.press('Escape')
 
   await page.getByRole('switch', { name: 'Disable alice' }).click()

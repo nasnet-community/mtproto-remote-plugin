@@ -31,7 +31,7 @@ test('stops and starts the service', async ({ page }) => {
   await page.getByRole('button', { name: 'Stop' }).click()
   await expect(toast(page, 'Proxy stopped')).toBeVisible()
   await expect(header.getByText('inactive', { exact: true })).toBeVisible()
-  await page.getByRole('button', { name: 'Start' }).click()
+  await page.getByRole('button', { name: 'Start', exact: true }).click()
   await expect(toast(page, 'Proxy started')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Stop' })).toBeVisible()
   await page.getByRole('button', { name: 'Restart' }).click()
@@ -56,7 +56,7 @@ test('updates the proxy', async ({ page }) => {
   await page.getByRole('button', { name: 'More actions' }).click()
   await page.getByRole('menuitem', { name: 'Update proxy' }).click()
   await expect(toast(page, 'Updated to version 3.6.0')).toBeVisible({ timeout: 10000 })
-  await expect(page.getByText('version 3.6.0')).toBeVisible()
+  await expect(page.getByText('version 3.6.0', { exact: true })).toBeVisible()
 })
 
 test('renames a server', async ({ page }) => {
