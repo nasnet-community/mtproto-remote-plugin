@@ -108,7 +108,17 @@ cargo test -- --ignored                      # also downloads and runs the real 
 cargo run                                    # page and API at http://localhost:8080
 
 cd web && npm run dev:mock                   # UI only, with a fake API and sample data
+cd web && npm run e2e                        # browser tests of the UI against that fake API
 ```
+
+The fake API (`web/mock-api.ts`) has sample servers in every state (running,
+stopped, crashed, unreachable, router key revoked) and users whose numbers
+change live. What the add-server form does depends on the address you type:
+`fail`, `offline`, `changed` or `kept` in the address give those outcomes.
+
+The browser tests use Playwright. They use a system Chromium if one is installed
+(`/usr/bin/chromium`, or `CHROMIUM_PATH`); otherwise install Playwright's own with
+`npx playwright install chromium`.
 
 If you run `cargo build` before the page is built, the binary embeds a placeholder
 page, so the Rust tests don't need Node.
