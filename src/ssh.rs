@@ -1,12 +1,15 @@
-//! A small SSH client: pinned host key, password login, and exec with stdin.
+//! A small SSH client: pinned host key, password or key login, exec with
+//! stdin, and HTTP to a loopback port on the server through the connection.
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use russh::client::{self, Handle, KeyboardInteractiveAuthResponse};
-use russh::keys::{HashAlg, PublicKeyOrCertificate};
+use russh::keys::{HashAlg, PrivateKey, PrivateKeyWithHashAlg, PublicKeyOrCertificate};
 use russh::{ChannelMsg, Disconnect};
 use thiserror::Error;
+
+use crate::http;
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 
@@ -22,6 +25,12 @@ pub enum SshError {
     HostKeyMismatch { expected: String, actual: String },
     #[error("login failed for {0}: wrong username or password, or password login is disabled")]
     AuthFailed(String),
+    #[error(
+        "the server no longer accepts the router key for {0}; it was removed from authorized_keys, or key login is disabled"
+    )]
+    KeyRejected(String),
+    #[error("request to the server's port {port} failed: {reason}")]
+    Tunnel { port: u16, reason: String },
     #[error("ssh: {0}")]
     Protocol(#[from] russh::Error),
 }
@@ -105,6 +114,17 @@ async fn open(
     (result, seen)
 }
 
+async fn open_pinned(host: &str, port: u16, fingerprint: &str) -> Result<Handle<Client>, SshError> {
+    match open(host, port, Some(fingerprint.to_string())).await {
+        (Ok(handle), _) => Ok(handle),
+        (Err(_), Some(actual)) if actual != fingerprint => Err(SshError::HostKeyMismatch {
+            expected: fingerprint.to_string(),
+            actual,
+        }),
+        (Err(e), _) => Err(e),
+    }
+}
+
 /// Reads the server's host key fingerprint without logging in.
 pub async fn probe(host: &str, port: u16) -> Result<String, SshError> {
     // No key is expected, so the handshake stops right after the server
@@ -130,17 +150,7 @@ impl Session {
         user: &str,
         password: &str,
     ) -> Result<Session, SshError> {
-        let mut handle = match open(host, port, Some(fingerprint.to_string())).await {
-            (Ok(handle), _) => handle,
-            (Err(_), Some(actual)) if actual != fingerprint => {
-                return Err(SshError::HostKeyMismatch {
-                    expected: fingerprint.to_string(),
-                    actual,
-                });
-            }
-            (Err(e), _) => return Err(e),
-        };
-
+        let mut handle = open_pinned(host, port, fingerprint).await?;
         if !handle
             .authenticate_password(user, password)
             .await?
@@ -150,6 +160,56 @@ impl Session {
             return Err(SshError::AuthFailed(user.to_string()));
         }
         Ok(Session { handle })
+    }
+
+    /// Connects with a pinned host key and logs in with `key`.
+    pub async fn connect_with_key(
+        host: &str,
+        port: u16,
+        fingerprint: &str,
+        user: &str,
+        key: &PrivateKey,
+    ) -> Result<Session, SshError> {
+        let mut handle = open_pinned(host, port, fingerprint).await?;
+        let key = PrivateKeyWithHashAlg::new(Arc::new(key.clone()), None);
+        if !handle.authenticate_publickey(user, key).await?.success() {
+            return Err(SshError::KeyRejected(user.to_string()));
+        }
+        Ok(Session { handle })
+    }
+
+    /// Sends one HTTP request to `127.0.0.1:port` as seen from the server.
+    pub async fn http(
+        &self,
+        port: u16,
+        method: &str,
+        path: &str,
+        authorization: Option<&str>,
+        json_body: Option<&[u8]>,
+    ) -> Result<http::Response, SshError> {
+        let tunnel = |reason: String| SshError::Tunnel { port, reason };
+        let channel = self
+            .handle
+            .channel_open_direct_tcpip("127.0.0.1", port.into(), "127.0.0.1", 0)
+            .await
+            .map_err(|e| tunnel(e.to_string()))?;
+        let request = http::request(
+            channel.into_stream(),
+            method,
+            path,
+            authorization,
+            json_body,
+        );
+        match tokio::time::timeout(Duration::from_secs(30), request).await {
+            Ok(Ok(response)) => Ok(response),
+            Ok(Err(e)) => Err(tunnel(e.to_string())),
+            Err(_) => Err(tunnel("timed out".into())),
+        }
+    }
+
+    /// False once the connection has dropped.
+    pub fn is_open(&self) -> bool {
+        !self.handle.is_closed()
     }
 
     /// Runs `command`, feeding it `stdin` (then EOF), and collects its output.
@@ -175,7 +235,7 @@ impl Session {
         Ok(out)
     }
 
-    pub async fn close(self) {
+    pub async fn close(&self) {
         let _ = self
             .handle
             .disconnect(Disconnect::ByApplication, "", "en")

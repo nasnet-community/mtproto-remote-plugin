@@ -3,14 +3,15 @@
 #![allow(dead_code)]
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Arc;
 
-use russh::keys::decode_secret_key;
+use russh::keys::{decode_secret_key, ssh_key};
 use russh::server::{self, Auth, Msg, Response, Server as _, Session};
 use russh::{Channel, ChannelId};
 use tokio::io::AsyncWriteExt;
-use tokio::net::TcpListener;
+use tokio::net::{TcpListener, TcpStream};
 use tokio::process::{ChildStdin, Command};
 use tokio::sync::Mutex;
 
@@ -28,6 +29,8 @@ pub enum Login {
 #[derive(Clone)]
 struct TestServer {
     login: Login,
+    /// Public keys accepted for USER are read from this file on each login.
+    authorized_keys: Option<Arc<PathBuf>>,
     /// Prepended to every command, e.g. to put fake tools on PATH.
     prelude: Arc<String>,
     stdins: Arc<Mutex<HashMap<ChannelId, ChildStdin>>>,
@@ -69,6 +72,48 @@ impl server::Handler for TestServer {
                 Ok(if ok { Auth::Accept } else { Auth::reject() })
             }
         }
+    }
+
+    async fn auth_publickey(
+        &mut self,
+        user: &str,
+        key: &ssh_key::PublicKey,
+    ) -> Result<Auth, Self::Error> {
+        let Some(path) = &self.authorized_keys else {
+            return Ok(Auth::reject());
+        };
+        // Compare "type base64", ignoring the comment, as sshd does.
+        let offered = key.to_openssh().unwrap();
+        let offered: Vec<&str> = offered.split(' ').take(2).collect();
+        let listed = std::fs::read_to_string(path.as_path()).unwrap_or_default();
+        let ok = user == USER
+            && listed
+                .lines()
+                .any(|l| l.split(' ').take(2).collect::<Vec<_>>() == offered);
+        Ok(if ok { Auth::Accept } else { Auth::reject() })
+    }
+
+    /// Forwards the channel to a local TCP port, like sshd's direct-tcpip.
+    async fn channel_open_direct_tcpip(
+        &mut self,
+        channel: Channel<Msg>,
+        host: &str,
+        port: u32,
+        _originator_address: &str,
+        _originator_port: u32,
+        reply: server::ChannelOpenHandle,
+        _session: &mut Session,
+    ) -> Result<(), Self::Error> {
+        let Ok(mut tcp) = TcpStream::connect((host.to_string(), port as u16)).await else {
+            drop(reply);
+            return Ok(());
+        };
+        reply.accept().await;
+        tokio::spawn(async move {
+            let mut stream = channel.into_stream();
+            let _ = tokio::io::copy_bidirectional(&mut stream, &mut tcp).await;
+        });
+        Ok(())
     }
 
     async fn channel_open_session(
@@ -139,6 +184,11 @@ impl server::Handler for TestServer {
 
 /// Starts a server on a free localhost port and returns the port.
 pub async fn start(login: Login, prelude: &str) -> u16 {
+    start_with(login, prelude, None).await
+}
+
+/// Like [`start`], also accepting keys listed in `authorized_keys`.
+pub async fn start_with(login: Login, prelude: &str, authorized_keys: Option<PathBuf>) -> u16 {
     let key = decode_secret_key(include_str!("../fixtures/host_ed25519"), None).unwrap();
     let config = Arc::new(server::Config {
         keys: vec![key],
@@ -150,6 +200,7 @@ pub async fn start(login: Login, prelude: &str) -> u16 {
     let port = socket.local_addr().unwrap().port();
     let mut server = TestServer {
         login,
+        authorized_keys: authorized_keys.map(Arc::new),
         prelude: Arc::new(prelude.to_string()),
         stdins: Arc::default(),
     };
