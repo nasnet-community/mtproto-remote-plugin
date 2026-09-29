@@ -253,7 +253,14 @@ export interface MenuItem {
 }
 
 export function Menu({ trigger, items }: { trigger: ReactNode; items: MenuItem[] }) {
-  const [pos, setPos] = useState<{ top: number; left: number; up: boolean } | null>(null)
+  const [pos, setPos] = useState<{
+    top: number
+    left: number
+    up: boolean
+    /** Where the trigger was when the menu opened. */
+    anchorTop: number
+    anchorLeft: number
+  } | null>(null)
   const anchor = useRef<HTMLDivElement>(null)
   const panel = useRef<HTMLDivElement>(null)
   const open = pos !== null
@@ -271,11 +278,19 @@ export function Menu({ trigger, items }: { trigger: ReactNode; items: MenuItem[]
       top: up ? r.top - 4 : r.bottom + 4,
       left: Math.max(8, Math.min(r.right - width, window.innerWidth - width - 8)),
       up,
+      anchorTop: r.top,
+      anchorLeft: r.left,
     })
   }
 
   useEffect(() => {
-    if (!open) return
+    if (!pos) return
+    // Scroll events arrive a frame late, so one from just before the click can
+    // land after the menu opened. Close only if the trigger really moved.
+    const onScroll = () => {
+      const r = anchor.current?.getBoundingClientRect()
+      if (!r || Math.abs(r.top - pos.anchorTop) > 2 || Math.abs(r.left - pos.anchorLeft) > 2) close()
+    }
     const onDown = (e: MouseEvent) => {
       const t = e.target as Node
       if (!anchor.current?.contains(t) && !panel.current?.contains(t)) close()
@@ -283,16 +298,16 @@ export function Menu({ trigger, items }: { trigger: ReactNode; items: MenuItem[]
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && close()
     document.addEventListener('mousedown', onDown)
     document.addEventListener('keydown', onKey)
-    window.addEventListener('scroll', close, true)
+    window.addEventListener('scroll', onScroll, true)
     window.addEventListener('resize', close)
-    panel.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus()
+    panel.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus({ preventScroll: true })
     return () => {
       document.removeEventListener('mousedown', onDown)
       document.removeEventListener('keydown', onKey)
-      window.removeEventListener('scroll', close, true)
+      window.removeEventListener('scroll', onScroll, true)
       window.removeEventListener('resize', close)
     }
-  }, [open, close])
+  }, [pos, close])
 
   const onMenuKey = (e: ReactKeyboardEvent) => {
     if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
@@ -415,7 +430,8 @@ export function QrCode({ text, size = 200 }: { text: string; size?: number }) {
     const qr = qrcode(0, 'M')
     qr.addData(text)
     qr.make()
-    return qr.createSvgTag({ cellSize: 4, margin: 4, scalable: true })
+    // The wrapper is the labelled image; hide the inner <svg> from screen readers.
+    return qr.createSvgTag({ cellSize: 4, margin: 4, scalable: true }).replace('<svg ', '<svg aria-hidden="true" ')
   }, [text])
   return (
     <div
