@@ -1,0 +1,414 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>MTProto Remote</title>
+    <style>
+      :root {
+        --bg: #f6f7f9;
+        --card: #ffffff;
+        --text: #1b1f24;
+        --muted: #5d6673;
+        --border: #d9dde3;
+        --accent: #2563eb;
+        --accent-text: #ffffff;
+        --ok: #15803d;
+        --bad: #b91c1c;
+        --warn-bg: #fff7e6;
+        --warn-border: #f0b429;
+        --code-bg: #eef1f5;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #0f1216;
+          --card: #171b21;
+          --text: #e6e9ee;
+          --muted: #98a2b1;
+          --border: #2a313b;
+          --accent: #3b82f6;
+          --ok: #4ade80;
+          --bad: #f87171;
+          --warn-bg: #2a2111;
+          --warn-border: #b7791f;
+          --code-bg: #0b0e12;
+        }
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      }
+      main { max-width: 640px; margin: 0 auto; padding: 24px 16px 48px; }
+      h1 { font-size: 22px; margin: 0 0 4px; }
+      h2 { font-size: 15px; margin: 0 0 12px; }
+      .sub { color: var(--muted); margin: 0 0 20px; }
+      .card {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 18px;
+        margin-bottom: 16px;
+      }
+      .grid { display: grid; grid-template-columns: 1fr 110px; gap: 12px; }
+      .grid .full { grid-column: 1 / -1; }
+      @media (max-width: 480px) { .grid { grid-template-columns: 1fr; } }
+      label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px; }
+      input {
+        width: 100%;
+        padding: 9px 10px;
+        font: inherit;
+        color: var(--text);
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: 7px;
+      }
+      input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+      .row { display: flex; gap: 8px; }
+      .row input { flex: 1; min-width: 0; }
+      button {
+        font: inherit;
+        padding: 9px 16px;
+        border-radius: 7px;
+        border: 1px solid var(--border);
+        background: var(--card);
+        color: var(--text);
+        cursor: pointer;
+      }
+      button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+      button:disabled { opacity: 0.55; cursor: default; }
+      .actions { display: flex; gap: 8px; margin-top: 16px; flex-wrap: wrap; }
+      .hint { font-size: 12px; color: var(--muted); margin-top: 4px; }
+      .error { color: var(--bad); margin-top: 12px; white-space: pre-wrap; }
+      .warn { background: var(--warn-bg); border-color: var(--warn-border); }
+      code, pre {
+        font: 12.5px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        background: var(--code-bg);
+        border-radius: 6px;
+      }
+      code { padding: 2px 5px; word-break: break-all; }
+      pre { padding: 10px; overflow-x: auto; white-space: pre-wrap; word-break: break-word; margin: 8px 0 0; }
+      ol.steps { list-style: none; padding: 0; margin: 0; }
+      ol.steps li { display: flex; gap: 10px; padding: 6px 0; }
+      .icon { width: 18px; flex: none; text-align: center; font-weight: 700; }
+      .done .icon { color: var(--ok); }
+      .failed .icon { color: var(--bad); }
+      .detail { font-size: 13px; color: var(--muted); white-space: pre-wrap; word-break: break-word; }
+      .failed .detail { color: var(--bad); }
+      .spin {
+        display: inline-block; width: 12px; height: 12px; margin-top: 4px;
+        border: 2px solid var(--border); border-top-color: var(--accent);
+        border-radius: 50%; animation: spin 0.8s linear infinite;
+      }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      .ok-title { color: var(--ok); }
+      .bad-title { color: var(--bad); }
+      [hidden] { display: none !important; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>MTProto Remote</h1>
+      <p class="sub" id="summary">Install a proxy on your own server over SSH.</p>
+
+      <form class="card" id="form" autocomplete="off">
+        <h2>Server</h2>
+        <div class="grid">
+          <div>
+            <label for="host">Hostname or IP</label>
+            <input id="host" required placeholder="203.0.113.10" spellcheck="false" />
+          </div>
+          <div>
+            <label for="sshPort">SSH port</label>
+            <input id="sshPort" type="number" min="1" max="65535" value="22" required />
+          </div>
+          <div>
+            <label for="username">Username</label>
+            <input id="username" value="root" required spellcheck="false" autocapitalize="off" />
+          </div>
+          <div></div>
+          <div class="full">
+            <label for="password">Password</label>
+            <input id="password" type="password" required autocomplete="new-password" />
+            <div class="hint">Used only for this deployment and never stored. Non-root users need sudo.</div>
+          </div>
+        </div>
+
+        <div id="proxy">
+          <h2 style="margin-top: 20px">Proxy</h2>
+          <div class="grid">
+            <div class="full" id="secretField">
+              <label for="secret">Secret</label>
+              <div class="row">
+                <input id="secret" spellcheck="false" autocapitalize="off" />
+                <button type="button" id="generate">Generate</button>
+              </div>
+              <div class="hint">
+                Generate makes a FakeTLS secret that disguises traffic as TLS to
+                <input id="domain" value="www.google.com" spellcheck="false"
+                  style="display: inline; width: 150px; padding: 1px 6px; font-size: 12px" />
+              </div>
+            </div>
+            <div id="portField">
+              <label for="proxyPort">Proxy port</label>
+              <input id="proxyPort" type="number" min="1" max="65535" value="443" />
+            </div>
+          </div>
+        </div>
+
+        <div class="actions">
+          <button class="primary" id="connect" type="submit">Connect and install</button>
+        </div>
+        <div class="error" id="formError" hidden></div>
+      </form>
+
+      <section class="card" id="hostKey" hidden>
+        <h2 id="hostKeyTitle">Confirm the server's identity</h2>
+        <p id="hostKeyText" style="margin: 0 0 8px"></p>
+        <code id="fingerprint"></code>
+        <label id="changedAck" style="margin-top: 12px; color: var(--text)" hidden>
+          <input type="checkbox" id="changedCheck" style="width: auto; margin-right: 6px" />
+          I know why the key changed (e.g. the server was reinstalled)
+        </label>
+        <div class="actions">
+          <button class="primary" id="trust" type="button">Trust and install</button>
+          <button id="cancel" type="button">Cancel</button>
+        </div>
+      </section>
+
+      <section class="card" id="progress" hidden>
+        <h2 id="progressTitle">Installing</h2>
+        <ol class="steps" id="steps"></ol>
+        <div id="result" hidden>
+          <div id="link" hidden style="margin-top: 14px">
+            <label>Telegram proxy link</label>
+            <div class="row">
+              <input id="tgLink" readonly />
+              <button type="button" id="copy">Copy</button>
+            </div>
+            <div class="hint">Open the port in the server's firewall if one is enabled.</div>
+          </div>
+          <details id="statusBox" style="margin-top: 14px">
+            <summary>Service status</summary>
+            <pre id="status"></pre>
+          </details>
+          <div class="actions">
+            <button id="again" type="button">Install on another server</button>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <script>
+      const $ = (id) => document.getElementById(id);
+      let cfg = { needsPort: true, needsSecret: true };
+      let pending = null; // the request waiting for host key confirmation
+      let lastRequest = null;
+
+      async function api(path, body) {
+        const init = body
+          ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }
+          : {};
+        const res = await fetch("api/" + path, init);
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || "Request failed (" + res.status + ")");
+        return data;
+      }
+
+      function showError(message) {
+        $("formError").textContent = message;
+        $("formError").hidden = !message;
+      }
+
+      function hex(bytes) {
+        return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+      }
+
+      $("generate").onclick = () => {
+        const domain = $("domain").value.trim() || "www.google.com";
+        const random = crypto.getRandomValues(new Uint8Array(16));
+        $("secret").value = "ee" + hex(random) + hex(new TextEncoder().encode(domain));
+      };
+
+      function formRequest() {
+        return {
+          host: $("host").value.trim(),
+          sshPort: Number($("sshPort").value),
+          username: $("username").value.trim(),
+          password: $("password").value,
+          proxyPort: cfg.needsPort ? Number($("proxyPort").value) : 0,
+          secret: cfg.needsSecret ? $("secret").value.trim() : "",
+        };
+      }
+
+      function setBusy(busy) {
+        for (const el of $("form").elements) el.disabled = busy;
+      }
+
+      $("form").onsubmit = async (event) => {
+        event.preventDefault();
+        showError("");
+        const req = formRequest();
+        if (cfg.needsSecret && !req.secret) return showError("Enter or generate a secret.");
+        setBusy(true);
+        try {
+          const key = await api("probe", { host: req.host, sshPort: req.sshPort });
+          req.fingerprint = key.fingerprint;
+          if (key.status === "known") return await start(req);
+          pending = req;
+          showHostKey(req, key);
+        } catch (err) {
+          showError(err.message);
+          setBusy(false);
+        }
+      };
+
+      function showHostKey(req, key) {
+        const changed = key.status === "changed";
+        $("hostKey").hidden = false;
+        $("hostKey").classList.toggle("warn", changed);
+        $("hostKeyTitle").textContent = changed
+          ? "Warning: the server's key has changed"
+          : "Confirm the server's identity";
+        $("hostKeyText").textContent = changed
+          ? `${req.host} presents a different key than last time. This can mean the server was reinstalled — or that someone is intercepting the connection.`
+          : `First connection to ${req.host}. Check this fingerprint matches the server (ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub).`;
+        $("fingerprint").textContent = key.fingerprint;
+        $("changedAck").hidden = !changed;
+        $("changedCheck").checked = false;
+        $("trust").disabled = changed;
+      }
+
+      $("changedCheck").onchange = () => ($("trust").disabled = !$("changedCheck").checked);
+
+      $("cancel").onclick = () => {
+        pending = null;
+        $("hostKey").hidden = true;
+        setBusy(false);
+      };
+
+      $("trust").onclick = async () => {
+        $("hostKey").hidden = true;
+        const req = pending;
+        pending = null;
+        try {
+          await start(req);
+        } catch (err) {
+          showError(err.message);
+          setBusy(false);
+        }
+      };
+
+      async function start(req) {
+        await api("deploy", req);
+        lastRequest = req;
+        $("password").value = "";
+        poll();
+      }
+
+      function renderJob(job) {
+        $("progress").hidden = false;
+        $("steps").replaceChildren(
+          ...job.steps.map((step) => {
+            const li = document.createElement("li");
+            li.className = step.state;
+            const icon = document.createElement("span");
+            icon.className = "icon";
+            if (step.state === "running") icon.innerHTML = '<span class="spin"></span>';
+            else icon.textContent = step.state === "done" ? "✓" : "✗";
+            const body = document.createElement("div");
+            body.textContent = step.title;
+            if (step.detail) {
+              const detail = document.createElement("div");
+              detail.className = "detail";
+              detail.textContent = step.detail;
+              body.append(detail);
+            }
+            li.append(icon, body);
+            return li;
+          }),
+        );
+
+        const title = $("progressTitle");
+        if (job.running) {
+          title.textContent = "Installing";
+          title.className = "";
+          return;
+        }
+        title.textContent = job.error ? "Installation failed" : "Installed and running";
+        title.className = job.error ? "bad-title" : "ok-title";
+        if (job.error && !job.steps.some((s) => s.state === "failed")) {
+          $("steps").insertAdjacentHTML("beforeend", '<li class="failed"><span class="icon">✗</span><div class="detail"></div></li>');
+          $("steps").lastChild.querySelector(".detail").textContent = job.error;
+        }
+
+        $("result").hidden = false;
+        const report = job.report;
+        $("statusBox").hidden = !report;
+        $("status").textContent = report ? report.status : "";
+        $("statusBox").open = Boolean(job.error && report);
+
+        const req = lastRequest;
+        const showLink = !job.error && req && cfg.needsSecret && cfg.needsPort;
+        $("link").hidden = !showLink;
+        if (showLink) {
+          const q = new URLSearchParams({ server: req.host, port: req.proxyPort, secret: req.secret });
+          $("tgLink").value = "https://t.me/proxy?" + q;
+        }
+      }
+
+      async function poll() {
+        $("form").hidden = true;
+        $("result").hidden = true;
+        for (;;) {
+          let job;
+          try {
+            job = await api("job");
+          } catch {
+            await new Promise((r) => setTimeout(r, 2000));
+            continue;
+          }
+          renderJob(job);
+          if (!job.running) return;
+          await new Promise((r) => setTimeout(r, 1000));
+        }
+      }
+
+      $("copy").onclick = async () => {
+        $("tgLink").select();
+        try {
+          await navigator.clipboard.writeText($("tgLink").value);
+          $("copy").textContent = "Copied";
+        } catch {
+          document.execCommand("copy");
+        }
+      };
+
+      $("again").onclick = () => {
+        $("progress").hidden = true;
+        $("form").hidden = false;
+        $("copy").textContent = "Copy";
+        setBusy(false);
+      };
+
+      (async () => {
+        try {
+          cfg = await api("config");
+          const tag = cfg.releaseTag || "latest release";
+          $("summary").textContent =
+            `Installs ${cfg.repo} (${tag}) on your server as ${cfg.serviceName}.service.`;
+          $("secretField").hidden = !cfg.needsSecret;
+          $("portField").hidden = !cfg.needsPort;
+          $("proxy").hidden = !cfg.needsSecret && !cfg.needsPort;
+          if (cfg.needsSecret) $("generate").onclick();
+          const job = await api("job");
+          if (job.running) poll();
+        } catch (err) {
+          showError(err.message);
+        }
+      })();
+    </script>
+  </body>
+</html>

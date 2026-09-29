@@ -4,3 +4,4 @@ pub mod hostkeys;
 pub mod install;
 pub mod release;
 pub mod ssh;
+pub mod web;
