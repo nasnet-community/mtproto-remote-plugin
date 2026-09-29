@@ -5,5 +5,6 @@ pub mod http;
 pub mod install;
 pub mod keys;
 pub mod release;
+pub mod servers;
 pub mod ssh;
 pub mod web;
