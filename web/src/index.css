@@ -1,0 +1,94 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  /* nasnet-panel's palette (frontend/src/ui/global.scss), under this page's names. */
+  :root,
+  [data-theme='dark'] {
+    --bg: #0a0a0a; /* --color-background */
+    --surface: #141414; /* --color-surface */
+    --card: #141414;
+    --card2: #1c1c1c; /* --color-surface-alt */
+    --border: #262626;
+    --border-strong: #3a3a3a;
+    --text: #f5f5f5;
+    --muted: #a1a1aa; /* --color-text-muted */
+    --faint: #71717a;
+    --track: rgba(255, 255, 255, 0.06);
+    --accent: #f8fafc; /* --color-primary */
+    --accent-strong: #e2e8f0;
+    --accent-fg: #0f172a; /* --color-primary-text */
+    --status-online: #22c55e; /* --color-success */
+    --status-warn: #edc32c;
+    --status-danger: #ef4444;
+    --status-idle: #a1a1aa;
+    --info: #3b82f6;
+    --overlay: rgba(0, 0, 0, 0.72);
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
+    --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.55);
+    color-scheme: dark;
+  }
+
+  [data-theme='light'] {
+    --bg: #f1f5f9;
+    --surface: #ffffff;
+    --card: #ffffff;
+    --card2: #f8fafc;
+    --border: #dbe3ed;
+    --border-strong: #c2ccd9;
+    --text: #0f172a;
+    --muted: #64748b;
+    --faint: #94a3b8;
+    --track: rgba(15, 23, 42, 0.06);
+    --accent: #0f172a;
+    --accent-strong: #1e293b;
+    --accent-fg: #f8fafc;
+    --status-online: #22c55e;
+    --status-warn: #edc32c;
+    --status-danger: #dc2626;
+    --status-idle: #64748b;
+    --info: #2563eb;
+    --overlay: rgba(15, 23, 42, 0.35);
+    --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.06);
+    --shadow-lg: 0 12px 32px rgba(15, 23, 42, 0.14);
+    color-scheme: light;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  html,
+  body {
+    margin: 0;
+    background: var(--bg);
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+
+  input,
+  select,
+  textarea,
+  button {
+    font: inherit;
+  }
+}
+
+@layer utilities {
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@layer components {
+  .tint-online { background: color-mix(in srgb, var(--status-online) 12%, transparent); }
+  .tint-warn { background: color-mix(in srgb, var(--status-warn) 12%, transparent); }
+  .tint-danger { background: color-mix(in srgb, var(--status-danger) 10%, transparent); }
+  .border-danger-soft { border-color: color-mix(in srgb, var(--status-danger) 35%, transparent); }
+  .tint-accent { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+}
