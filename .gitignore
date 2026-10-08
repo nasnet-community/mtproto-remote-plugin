@@ -1,2 +1,5 @@
-/target
+/dist
 /data
+/coverage.out
+web/node_modules
+web/dist
