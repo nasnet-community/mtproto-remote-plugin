@@ -12,6 +12,7 @@ import {
   Copy as LCopy,
   Download as LDownload,
   Ellipsis as LEllipsis,
+  Info as LInfo,
   KeyRound as LKeyRound,
   Loader2 as LLoader2,
   Moon as LMoon,
@@ -30,6 +31,7 @@ import {
   Trash2 as LTrash2,
   TriangleAlert as LTriangleAlert,
   Users as LUsers,
+  Wrench as LWrench,
   X as LX,
 } from 'lucide-react'
 
@@ -49,6 +51,7 @@ export const CircleX = panel(LCircleX)
 export const Copy = panel(LCopy)
 export const Download = panel(LDownload)
 export const Ellipsis = panel(LEllipsis)
+export const Info = panel(LInfo)
 export const KeyRound = panel(LKeyRound)
 export const Loader = panel(LLoader2)
 export const Moon = panel(LMoon)
@@ -67,6 +70,7 @@ export const Sun = panel(LSun)
 export const Trash2 = panel(LTrash2)
 export const TriangleAlert = panel(LTriangleAlert)
 export const Users = panel(LUsers)
+export const Wrench = panel(LWrench)
 export const X = panel(LX)
 
 /** nasnet-panel's Telegram MTProto plugin logo (routes/plugins/PluginLogos.tsx). */

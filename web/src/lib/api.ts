@@ -5,58 +5,56 @@ export class ApiError extends Error {
   constructor(
     message: string,
     readonly status: number,
+    readonly body: Record<string, unknown> = {},
   ) {
     super(message)
   }
+
+  /** The server's link is down and the call needs an SSH login (or force). */
+  get needLogin() {
+    return this.body.needLogin === true
+  }
 }
+
+// Another site's page can't send this without a preflight, which the panel refuses.
+const OWN = { 'X-MTProto-UI': '1' }
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   const res = await fetch(`api/${path}`, {
     method,
-    headers: body === undefined ? {} : { 'Content-Type': 'application/json' },
+    headers: body === undefined ? OWN : { ...OWN, 'Content-Type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
   })
   const data = await res.json().catch(() => ({}))
   if (!res.ok) {
-    const message =
-      data?.error?.message ?? (typeof data?.error === 'string' ? data.error : undefined)
-    throw new ApiError(message ?? `Request failed (${res.status})`, res.status)
+    const message = typeof data?.error === 'string' && data.error ? data.error : undefined
+    throw new ApiError(message ?? `Request failed (${res.status})`, res.status, data ?? {})
   }
   return data as T
 }
 
+export interface Allowlist {
+  prefixes: number
+  placeholder: boolean
+  refreshedAt: string | null
+  lastError: string
+  url: string
+}
+
 export interface AppConfig {
   version: string
-  repo: string
-  releaseTag: string
-  routerKey: string
+  maxServers: number
+  serverCount: number
+  streamBudget: number
+  streamsAllocated: number
+  defaultMaxStreams: number
+  allowlist: Allowlist
 }
 
-export interface Server {
-  id: string
-  name: string
+export interface ProbeRequest {
   host: string
   sshPort: number
-  username: string
-  fingerprint: string
-  proxyPort: number
-  tlsDomain: string
-  arch: string
-  addedAt: number
-}
-
-export interface Step {
-  title: string
-  state: 'running' | 'done' | 'failed'
-  detail: string
-}
-
-export interface Job {
-  id: number
-  running: boolean
-  steps: Step[]
-  error: string | null
-  report: { serverId: string; release: string; keptConfig: boolean; users: number } | null
+  sshUser: string
 }
 
 export interface ProbeResult {
@@ -64,100 +62,274 @@ export interface ProbeResult {
   status: 'new' | 'known' | 'changed'
 }
 
-export interface InstallRequest {
+export interface Login {
+  sshPort: number
+  sshUser: string
+  password?: string
+  privateKey?: string
+  passphrase?: string
+  hostKey: string
+}
+
+export interface InstallRequest extends Login {
+  name: string
+  host: string
+  coverDomain: string
+  maxStreams?: number
+  firstUser?: string
+  allowUnverifiedCover?: boolean
+}
+
+export interface RepairRequest extends Login {
+  reset?: boolean
+}
+
+export interface RemoveRequest {
+  force?: boolean
+  login?: Login
+}
+
+export type JobState = 'running' | 'ok' | 'failed'
+
+export interface JobStep {
+  name: string
+  state: JobState
+  detail?: string
+}
+
+export interface Job {
+  id: string
+  kind: 'install' | 'repair' | 'uninstall' | 'update-agent' | 'update-telemt' | 'rotate'
+  state: JobState
+  steps: JobStep[]
+  error?: string
+  serverId?: number
+  startedAt: string
+  finishedAt?: string
+}
+
+export interface LinkConn {
+  name: string
+  up: boolean
+  since: string | null
+  rttMs: number
+  streams: number
+  lastError: string
+}
+
+export interface LinkState {
+  state: 'up' | 'degraded' | 'down'
+  up: number
+  total: number
+  streams: number
+  relayed: number
+  dialFailures: number
+  violations: number
+  bytesToDc: number
+  bytesFromDc: number
+  conns: LinkConn[]
+}
+
+export interface AgentState {
+  version: string
+  telemtVersion: string
+  uptimeSec: number
+  rssBytes: number
+  stateRev: string
+  reportedAt: string
+  /** held: why the agent keeps the proxy stopped */
+  telemt: { running: boolean; restarts: number; uptimeSec: number; lastExit: string; crashLoop: boolean; held?: string }
+  capture: { rules: boolean; active: number; rejected: number }
+  cover: { domain: string; ok: boolean; checkedAt: string | null; error: string }
+}
+
+export interface ServerEvent {
+  at: string
+  kind: string
+  detail: string
+}
+
+export interface Server {
+  id: number
+  name: string
   host: string
   sshPort: number
-  username: string
-  password: string
-  fingerprint: string
+  sshUser: string
+  hostKey: string
+  /** False when the install died before it was saved: no key or link, so only removal works. */
+  registered: boolean
+  createdAt: string
+  coverDomain: string
+  maxStreams: number
+  hubPort: number
+  arch: string
+  agentVersion: string
+  telemtVersion: string
+  lastSeenAt: string | null
+  userCount: number
+  link: LinkState
+  agent: AgentState | null
+  sync: {
+    desiredRev: string
+    appliedRev: string
+    lastPushAt: string | null
+    lastPushError: string
+    healthy: boolean
+  }
+  events?: ServerEvent[]
+}
+
+export interface CoverCheck {
+  ok: boolean
+  tls13: boolean
+  x25519: boolean
+  h2: boolean
+  certOk: boolean
+  addrs: string[]
+  latencyMs: number
+  error: string
+}
+
+export interface User {
   name: string
-  proxyPort: number
-  tlsDomain: string
-  firstUser: string
-}
-
-export interface ServerStatus {
-  service: string
-  info: { version?: string; uptime_seconds?: number } | null
-  summary: { connections_total?: number; configured_users?: number } | null
-  apiError: string | null
-}
-
-/** A user as telemt's API reports it. */
-export interface TelemtUser {
-  username: string
   enabled: boolean
-  in_runtime: boolean
-  max_tcp_conns: number | null
-  expiration_rfc3339: string | null
-  data_quota_bytes: number | null
-  rate_limit_up_bps: number | null
-  rate_limit_down_bps: number | null
-  max_unique_ips: number | null
-  current_connections: number
-  active_unique_ips: number
-  active_unique_ips_list: string[]
-  recent_unique_ips: number
-  total_octets: number
-  links: { classic: string[]; secure: string[]; tls: string[] }
+  state: 'active' | 'disabled' | 'expired' | 'over-quota'
+  maxIps: number
+  expiresAt: string | null
+  quotaBytes: number
+  up: number
+  down: number
+  createdAt: string
+  secret: string
+  links: { tg: string; https: string }
 }
 
-/** Limits a user can have; `null` clears one. */
-export interface UserLimits {
-  max_tcp_conns?: number | null
-  max_unique_ips?: number | null
-  data_quota_bytes?: number | null
-  expiration_rfc3339?: string | null
-  rate_limit_up_bps?: number | null
-  rate_limit_down_bps?: number | null
+export interface CreateUser {
+  name: string
   enabled?: boolean
+  maxIps?: number
+  expiresAt?: string | null
+  quotaBytes?: number
 }
+
+export type UpdateUser = Omit<CreateUser, 'name'>
+
+type Started = { jobId: string }
+
+const srv = (id: number) => `servers/${id}`
 
 export const api = {
   config: () => request<AppConfig>('GET', 'config'),
-  probe: (host: string, sshPort: number) =>
-    request<ProbeResult>('POST', 'probe', { host, sshPort }),
-  install: (req: InstallRequest) => request<{ id: number }>('POST', 'deploy', req),
-  job: () => request<Job>('GET', 'job'),
+  probe: (req: ProbeRequest) => request<ProbeResult>('POST', 'probe', req),
+  install: (req: InstallRequest) => request<Started>('POST', 'servers', req),
+  job: (jobId: string) => request<Job>('GET', `jobs/${encodeURIComponent(jobId)}`),
   servers: () => request<Server[]>('GET', 'servers'),
-  rename: (id: string, name: string) => request<Server>('PATCH', `servers/${id}`, { name }),
-  remove: (id: string, uninstall: boolean) =>
-    request<{ removed: boolean; warning: string | null }>('DELETE', `servers/${id}`, {
-      uninstall,
-    }),
-  status: (id: string) => request<ServerStatus>('GET', `servers/${id}/status`),
-  service: (id: string, action: 'start' | 'stop' | 'restart') =>
-    request<{ ok: boolean }>('POST', `servers/${id}/service/${action}`),
-  logs: (id: string, lines = 300) =>
-    request<{ logs: string }>('GET', `servers/${id}/logs?lines=${lines}`),
-  update: (id: string) => request<{ release: string }>('POST', `servers/${id}/update`),
+  server: (id: number) => request<Server>('GET', srv(id)),
+  rename: (id: number, name: string) => request<Server>('PATCH', srv(id), { name }),
+  settings: (id: number, s: { coverDomain?: string; maxStreams?: number }) =>
+    request<Server>('PATCH', `${srv(id)}/settings`, s),
+  repair: (id: number, req: RepairRequest) => request<Started>('POST', `${srv(id)}/repair`, req),
+  remove: (id: number, req: RemoveRequest = {}) =>
+    request<Started>('POST', `${srv(id)}/remove`, req),
+  update: (id: number, kind: 'agent' | 'telemt') =>
+    request<Started>('POST', `${srv(id)}/update`, { kind }),
+  rotate: (id: number) => request<Started>('POST', `${srv(id)}/rotate`),
+  restart: (id: number) => request<{ ok: boolean }>('POST', `${srv(id)}/restart`),
+  checkCover: (id: number, domain: string) =>
+    request<CoverCheck>('POST', `${srv(id)}/disguise-check`, { domain }),
+  logs: (id: number, lines = 300) =>
+    request<{ lines: string[] }>('GET', `${srv(id)}/logs?lines=${lines}`),
+  refreshAllowlist: () => request<Allowlist>('POST', 'allowlist/refresh'),
 }
 
-/** Calls telemt's API on a server and unwraps its `{ ok, data }` envelope. */
-async function telemt<T>(id: string, method: string, path: string, body?: unknown): Promise<T> {
-  const res = await request<{ ok: boolean; data: T }>(
-    method,
-    `servers/${id}/telemt/v1/${path}`,
-    body,
-  )
-  return res.data
-}
-
-const user = (name: string) => `users/${encodeURIComponent(name)}`
+const user = (id: number, name: string) => `${srv(id)}/users/${encodeURIComponent(name)}`
 
 export const users = {
-  list: (id: string) => telemt<TelemtUser[]>(id, 'GET', 'users'),
-  create: (id: string, username: string, limits: UserLimits) =>
-    telemt<{ user: TelemtUser; secret: string }>(id, 'POST', 'users', { username, ...limits }),
-  update: (id: string, name: string, limits: UserLimits) =>
-    telemt<TelemtUser>(id, 'PATCH', user(name), limits),
-  remove: (id: string, name: string) => telemt<unknown>(id, 'DELETE', user(name)),
-  setEnabled: (id: string, name: string, enabled: boolean) =>
-    telemt<TelemtUser>(id, 'POST', `${user(name)}/${enabled ? 'enable' : 'disable'}`),
-  rotateSecret: (id: string, name: string) =>
-    telemt<{ user: TelemtUser; secret: string }>(id, 'POST', `${user(name)}/rotate-secret`),
-  resetQuota: (id: string, name: string) =>
-    telemt<unknown>(id, 'POST', `${user(name)}/reset-quota`),
-  setTlsDomain: (id: string, domain: string) =>
-    telemt<unknown>(id, 'PATCH', 'config', { censorship: { tls_domain: domain } }),
+  list: (id: number) => request<User[]>('GET', `${srv(id)}/users`),
+  create: (id: number, u: CreateUser) => request<User>('POST', `${srv(id)}/users`, u),
+  update: (id: number, name: string, u: UpdateUser) => request<User>('PATCH', user(id, name), u),
+  remove: (id: number, name: string) => request<{ ok: boolean }>('DELETE', user(id, name)),
+  rotateSecret: (id: number, name: string) =>
+    request<User>('POST', `${user(id, name)}/rotate-secret`),
+  resetUsage: (id: number, name: string) => request<User>('POST', `${user(id, name)}/reset-usage`),
+}
+
+/**
+ * Follows a job until it ends: over its event stream, or by polling when the
+ * stream fails or stays silent. Returns a function that stops following.
+ */
+export function followJob(
+  jobId: string,
+  onUpdate: (job: Job) => void,
+  { pollMs = 1000, silentMs = 5000 } = {},
+): () => void {
+  let stopped = false
+  let polling = false
+  let last: Job | null = null
+  let source: EventSource | null = null
+  let timer: ReturnType<typeof setTimeout> | undefined
+  let watchdog: ReturnType<typeof setTimeout> | undefined
+
+  const deliver = (job: Job) => {
+    if (stopped) return
+    last = job
+    onUpdate(job)
+    if (job.state !== 'running') stop()
+  }
+
+  const poll = async () => {
+    if (stopped) return
+    try {
+      deliver(await api.job(jobId))
+    } catch (e) {
+      // a restarted plugin forgets its jobs, so this one will never end
+      if (e instanceof ApiError && e.status === 404) {
+        return deliver({
+          ...(last ?? { id: jobId, kind: 'install', steps: [], startedAt: '' }),
+          state: 'failed',
+          error: 'The router lost track of this job, likely after a restart. Check the server, then try again.',
+        })
+      }
+      // anything else is a blip; the next tick tries again
+    }
+    if (!stopped) timer = setTimeout(poll, pollMs)
+  }
+
+  const fallBack = () => {
+    clearTimeout(watchdog)
+    source?.close()
+    source = null
+    if (stopped || polling) return
+    polling = true
+    void poll()
+  }
+
+  const stop = () => {
+    stopped = true
+    clearTimeout(timer)
+    clearTimeout(watchdog)
+    source?.close()
+    source = null
+  }
+
+  if (typeof EventSource === 'undefined') {
+    fallBack()
+  } else {
+    source = new EventSource(`api/jobs/${encodeURIComponent(jobId)}/stream`)
+    source.onmessage = (e) => {
+      clearTimeout(watchdog)
+      let job: Job
+      try {
+        job = JSON.parse(e.data)
+      } catch {
+        return fallBack()
+      }
+      deliver(job)
+    }
+    // the stream closes after the final state, which deliver() has already seen
+    source.onerror = fallBack
+    // a proxy that buffers the stream would show nothing until the job ends
+    watchdog = setTimeout(fallBack, silentMs)
+  }
+  return stop
 }

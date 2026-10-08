@@ -1,5 +1,5 @@
 import type { Page } from '@playwright/test'
-import { dialog, expect, openServer, test, toast } from './fixtures'
+import { AMS, FRA, dialog, expect, openServer, test, toast } from './fixtures'
 
 const row = (page: Page, name: string) =>
   page.getByRole('row').filter({ has: page.getByText(name, { exact: true }) })
@@ -18,18 +18,22 @@ async function shareLink(page: Page, name: string) {
 }
 
 test.beforeEach(async ({ page }) => {
-  await openServer(page, 'fra1')
+  await openServer(page, FRA)
   await expect(row(page, 'alice')).toBeVisible()
 })
 
-test('shows users, their state and totals', async ({ page }) => {
-  await expect(page.getByText('Users', { exact: true }).locator('..')).toContainText('22')
+test('shows users, their usage and state', async ({ page }) => {
+  await expect(page.locator('div').filter({ hasText: /^Users22$/ })).toHaveCount(1)
+  await expect(row(page, 'bob')).toContainText('910 MB')
   await expect(row(page, 'alice')).toContainText('quota 50.0 GB')
+  await expect(row(page, 'alice')).toContainText('active')
   await expect(row(page, 'old-phone')).toContainText('disabled')
   await expect(row(page, 'expired-trial')).toContainText('expired')
-  await expect(row(page, 'guest-wifi')).toContainText('disabled')
+  await expect(row(page, 'used-up')).toContainText('over quota')
   await expect(row(page, 'bob')).toContainText('never')
-  await expect(row(page, 'office')).toContainText('online')
+  // Live sessions and client addresses are not reported, so not shown.
+  await expect(page.getByRole('columnheader', { name: 'Connections' })).toHaveCount(0)
+  await expect(page.getByRole('columnheader', { name: 'Devices' })).toHaveCount(0)
 })
 
 test('searches users', async ({ page }) => {
@@ -48,24 +52,21 @@ test('adds a user with limits and shares the link', async ({ page }) => {
   await add.getByLabel('Traffic quota').fill('10')
   await add.getByLabel('Expires').fill('2031-01-01')
   await add.getByLabel('Devices').fill('2')
-  await add.getByLabel('Download speed').fill('25')
   await add.getByRole('button', { name: 'Add user' }).click()
 
   await expect(toast(page, 'zed added')).toBeVisible()
   const share = dialog(page, "Share zed's proxy")
   await expect(share.getByRole('img', { name: 'QR code of the proxy link' })).toBeVisible()
   await expect(share).toContainText('tg://proxy?server=203.0.113.10&port=443&secret=ee')
+  await expect(share.getByRole('button', { name: 'Copy tg:// link' })).toBeVisible()
   await expect(share.getByRole('button', { name: 'Copy t.me link' })).toBeVisible()
-  // Frankfurt is dual-stack, so there is a link per address.
-  await share.getByRole('button', { name: '2001:db8::10' }).click()
-  await expect(share).toContainText('tg://proxy?server=2001:db8::10')
   await share.getByRole('button', { name: 'Close' }).click()
 
   await expect(row(page, 'zed')).toContainText('quota 10.0 GB')
   await userAction(page, 'zed', 'Edit limits')
   const edit = dialog(page, 'Limits for zed')
   await expect(edit.getByLabel('Devices')).toHaveValue('2')
-  await expect(edit.getByLabel('Download speed')).toHaveValue('25')
+  await expect(edit.getByLabel('Traffic quota')).toHaveValue('10')
   await expect(edit.getByLabel('Expires')).toHaveValue('2031-01-01')
 })
 
@@ -74,10 +75,10 @@ test('rejects bad and duplicate user names', async ({ page }) => {
   const add = dialog(page, 'Add a user')
   await add.getByLabel('Name').fill('bad name')
   await add.getByRole('button', { name: 'Add user' }).click()
-  await expect(add).toContainText("Use 1–64 letters, digits, '.', '_' or '-'")
+  await expect(add).toContainText("Use 1–32 letters, digits, '.', '_' or '-'")
   await add.getByLabel('Name').fill('alice')
   await add.getByRole('button', { name: 'Add user' }).click()
-  await expect(add).toContainText('User already exists')
+  await expect(add).toContainText('a user named alice already exists')
   await add.getByLabel('Name').fill('ok')
   await add.getByLabel('Traffic quota').fill('-5')
   await add.getByRole('button', { name: 'Add user' }).click()
@@ -90,11 +91,11 @@ test('edits and clears limits', async ({ page }) => {
   await expect(edit.getByLabel('Traffic quota')).toHaveValue('50')
   await expect(edit.getByLabel('Devices')).toHaveValue('3')
   await edit.getByLabel('Traffic quota').fill('')
-  await edit.getByLabel('Connections').fill('12')
+  await edit.getByLabel('Expires').fill('')
   await edit.getByRole('button', { name: 'Save' }).click()
   await expect(toast(page, 'alice updated')).toBeVisible()
   await expect(row(page, 'alice')).not.toContainText('quota')
-  await expect(row(page, 'alice')).toContainText('/ 12')
+  await expect(row(page, 'alice')).toContainText('never')
 })
 
 test('disables and enables a user', async ({ page }) => {
@@ -118,10 +119,13 @@ test('gives a user a new secret', async ({ page }) => {
   expect(after).not.toBe(before)
 })
 
-test('resets a quota', async ({ page }) => {
-  await userAction(page, 'alice', 'Reset quota')
-  await dialog(page, "Reset alice's quota?").getByRole('button', { name: 'Reset quota' }).click()
-  await expect(toast(page, "alice's quota was reset")).toBeVisible()
+test('resets usage, which lifts a used-up quota', async ({ page }) => {
+  await expect(row(page, 'used-up')).toContainText('over quota')
+  await userAction(page, 'used-up', 'Reset usage')
+  await dialog(page, "Reset used-up's usage?").getByRole('button', { name: 'Reset usage' }).click()
+  await expect(toast(page, "used-up's usage was reset")).toBeVisible()
+  await expect(row(page, 'used-up')).toContainText('active')
+  await expect(row(page, 'used-up')).toContainText('0 B')
 })
 
 test('deletes a user after confirming', async ({ page }) => {
@@ -135,33 +139,11 @@ test('deletes a user after confirming', async ({ page }) => {
   await expect(row(page, 'bob')).toHaveCount(0)
 })
 
-test('changing the disguise domain changes every link', async ({ page }) => {
-  const before = await shareLink(page, 'alice')
-  expect(before).toContain('7777772e676f6f676c652e636f6d') // www.google.com
-  await page.getByRole('button', { name: 'settings' }).click()
-  await expect(page).toHaveURL(/#\/servers\/fra1\/settings$/)
-  const change = page.getByRole('button', { name: 'Change domain' })
-  await expect(change).toBeDisabled()
-  await page.getByLabel('New domain').fill('www.cloudflare.com')
-  await change.click()
-  await expect(toast(page, /Now disguised as www.cloudflare.com/)).toBeVisible()
-
-  await page.getByRole('button', { name: 'users' }).click()
-  const after = await shareLink(page, 'alice')
-  expect(after).toContain('7777772e636c6f7564666c6172652e636f6d') // www.cloudflare.com
-})
-
-test('settings show the server details and router key', async ({ page }) => {
-  await openServer(page, 'fra1', 'settings')
-  await expect(page.locator('dl').getByText('root@203.0.113.10:22')).toBeVisible()
-  await expect(page.getByText('SHA256:p2OiwWbYoEAsmmYWEMy1L12ya7lUDzuHYODmtJ18R/w')).toBeVisible()
-  await expect(page.getByText(/^ssh-ed25519 .* nasnet-mtproto-remote$/)).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Copy key' })).toBeVisible()
-})
-
-test('a stopped server says its users cannot be loaded', async ({ page }) => {
-  await openServer(page, 'ams1')
-  await expect(page.getByText(/port 9091 failed/).first()).toBeVisible()
+test('users of a server with its link down can still be managed', async ({ page }) => {
+  await openServer(page, AMS)
+  await expect(page.getByText('Changes reach the server when its link is back.')).toBeVisible()
+  await page.getByRole('switch', { name: 'Disable spare2' }).click()
+  await expect(toast(page, 'spare2 disabled')).toBeVisible()
 })
 
 test('the actions menu on the last row is not clipped', async ({ page }) => {

@@ -11,10 +11,11 @@ import {
   type InputHTMLAttributes,
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
+  type TextareaHTMLAttributes,
 } from 'react'
 import { createPortal } from 'react-dom'
 import qrcode from 'qrcode-generator'
-import { Check, Copy, Loader, X } from './icons'
+import { Check, Copy, Info, Loader, TriangleAlert, X } from './icons'
 
 export function cx(...classes: (string | false | null | undefined)[]) {
   return classes.filter(Boolean).join(' ')
@@ -72,6 +73,19 @@ export function Input({ className, ...rest }: InputHTMLAttributes<HTMLInputEleme
         'h-9 w-full rounded-md border border-border-strong bg-surface px-3 text-foreground',
         'placeholder:text-faint focus:outline focus:outline-2 focus:outline-accent',
         'disabled:opacity-60',
+        className,
+      )}
+      {...rest}
+    />
+  )
+}
+
+export function Textarea({ className, ...rest }: TextareaHTMLAttributes<HTMLTextAreaElement>) {
+  return (
+    <textarea
+      className={cx(
+        'min-h-[88px] w-full rounded-md border border-border-strong bg-surface px-3 py-2 font-mono text-xs text-foreground',
+        'placeholder:text-faint focus:outline focus:outline-2 focus:outline-accent',
         className,
       )}
       {...rest}
@@ -195,9 +209,12 @@ export function Dialog({
   wide?: boolean
 }) {
   const panel = useRef<HTMLDivElement>(null)
+  // a new onClose every parent render must not re-run the focus effect
+  const close = useRef(onClose)
+  close.current = onClose
   useEffect(() => {
     if (!open) return
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && close.current()
     document.addEventListener('keydown', onKey)
     const previous = document.activeElement as HTMLElement | null
     const first = panel.current?.querySelector<HTMLElement>(
@@ -208,7 +225,7 @@ export function Dialog({
       document.removeEventListener('keydown', onKey)
       previous?.focus?.()
     }
-  }, [open, onClose])
+  }, [open])
 
   if (!open) return null
   return createPortal(
@@ -441,6 +458,22 @@ export function QrCode({ text, size = 200 }: { text: string; size?: number }) {
       aria-label="QR code of the proxy link"
       dangerouslySetInnerHTML={{ __html: svg }}
     />
+  )
+}
+
+const NOTICE = {
+  info: 'border-border-strong bg-card2 [&>svg]:text-muted',
+  warn: 'border-status-warn tint-warn [&>svg]:text-status-warn',
+  danger: 'border-danger-soft tint-danger [&>svg]:text-status-danger',
+}
+
+export function Notice({ tone = 'info', children }: { tone?: keyof typeof NOTICE; children: ReactNode }) {
+  const Icon = tone === 'info' ? Info : TriangleAlert
+  return (
+    <div className={cx('flex gap-3 rounded-md border p-3 text-[13px]', NOTICE[tone])}>
+      <Icon className="mt-0.5 h-4 w-4 shrink-0" />
+      <div className="min-w-0 break-words">{children}</div>
+    </div>
   )
 }
 

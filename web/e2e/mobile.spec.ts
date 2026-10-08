@@ -1,10 +1,10 @@
-import { dialog, expect, openServer, test, toast } from './fixtures'
+import { FRA, dialog, expect, openServer, test, toast } from './fixtures'
 
 test('on a phone, users are cards and every action is reachable', async ({ page }) => {
-  await openServer(page, 'fra1')
+  await openServer(page, FRA)
   await expect(page.getByRole('table')).toBeHidden()
   const alice = page.getByRole('listitem').filter({ hasText: /^alice/ })
-  await expect(alice).toContainText('devices')
+  await expect(alice).toContainText('quota 50.0 GB')
   await page.getByRole('button', { name: 'Actions for alice' }).click()
   await page.getByRole('menuitem', { name: 'Share link' }).click()
   await expect(
@@ -17,7 +17,7 @@ test('on a phone, users are cards and every action is reachable', async ({ page 
 })
 
 test('on a phone, the page does not scroll sideways', async ({ page }) => {
-  for (const path of ['/', '/#/servers/fra1', '/#/servers/fra1/settings']) {
+  for (const path of ['/', '/#/servers/1', '/#/servers/1/status', '/#/servers/2/status', '/#/servers/1/settings', '/#/servers/1/logs']) {
     await page.goto(path)
     await page.waitForLoadState('networkidle')
     const overflow = await page.evaluate(

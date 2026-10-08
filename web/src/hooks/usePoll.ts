@@ -7,19 +7,26 @@ export function usePoll<T>(fn: () => Promise<T>, intervalMs: number, deps: unkno
   const [loading, setLoading] = useState(true)
   const fnRef = useRef(fn)
   fnRef.current = fn
+  // bumped when deps change, so a reply for the old deps (another server) is dropped
+  const generation = useRef(0)
 
   const reload = useCallback(async () => {
+    const mine = generation.current
     try {
-      setData(await fnRef.current())
+      const value = await fnRef.current()
+      if (mine !== generation.current) return
+      setData(value)
       setError(null)
     } catch (e) {
+      if (mine !== generation.current) return
       setError(e instanceof Error ? e.message : String(e))
     } finally {
-      setLoading(false)
+      if (mine === generation.current) setLoading(false)
     }
   }, [])
 
   useEffect(() => {
+    generation.current += 1
     setLoading(true)
     setData(null)
     void reload()

@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Moon, Sun, TelegramMtprotoLogo } from './components/icons'
-import { api, type AppConfig } from './lib/api'
-import { useRoute } from './hooks/useRoute'
+import { api } from './lib/api'
+import { usePoll } from './hooks/usePoll'
+import { navigate, useRoute } from './hooks/useRoute'
 import { Button } from './components/ui'
 import { ServersScreen } from './screens/ServersScreen'
 import { ServerScreen } from './screens/ServerScreen'
@@ -27,33 +28,45 @@ function ThemeToggle() {
 
 export function App() {
   const route = useRoute()
-  const [config, setConfig] = useState<AppConfig | null>(null)
-  useEffect(() => {
-    api.config().then(setConfig, () => setConfig(null))
-  }, [])
+  const config = usePoll(api.config, 30000)
+  const reloadConfig = () => void config.reload()
 
   return (
     <div className="min-h-screen">
       <header className="sticky top-0 z-20 border-b border-border bg-surface">
         <div className="mx-auto flex h-14 max-w-6xl items-center gap-3 px-4">
-          <a href="#/" className="flex items-center gap-2.5 font-semibold">
+          {/* "#/" alone resolves against <base href> and reloads the page when the panel's URL has no trailing slash */}
+          <a
+            href="#/"
+            onClick={(e) => {
+              e.preventDefault()
+              navigate({ page: 'servers' })
+            }}
+            className="flex items-center gap-2.5 font-semibold"
+          >
             <TelegramMtprotoLogo size={30} />
             MTProto Remote
           </a>
           <span className="hidden text-xs text-faint sm:inline">
-            MTProto proxies on your own servers
+            Proxy servers that reach Telegram through this router
           </span>
           <div className="ml-auto flex items-center gap-1">
-            {config && <span className="mr-2 text-xs text-faint">v{config.version}</span>}
+            {config.data && <span className="mr-2 text-xs text-faint">v{config.data.version}</span>}
             <ThemeToggle />
           </div>
         </div>
       </header>
       <main className="mx-auto max-w-6xl px-4 py-6">
         {route.page === 'servers' ? (
-          <ServersScreen />
+          <ServersScreen config={config.data} onChanged={reloadConfig} />
         ) : (
-          <ServerScreen id={route.id} tab={route.tab} config={config} />
+          <ServerScreen
+            key={route.id}
+            id={route.id}
+            tab={route.tab}
+            config={config.data}
+            onConfigChanged={reloadConfig}
+          />
         )}
       </main>
     </div>

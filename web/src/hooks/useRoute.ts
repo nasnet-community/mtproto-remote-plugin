@@ -1,18 +1,23 @@
 import { useEffect, useState } from 'react'
 
-export type Route = { page: 'servers' } | { page: 'server'; id: string; tab: 'users' | 'settings' }
+export type Tab = 'users' | 'status' | 'settings' | 'logs'
+const TABS: Tab[] = ['users', 'status', 'settings', 'logs']
+
+export type Route = { page: 'servers' } | { page: 'server'; id: string; tab: Tab }
 
 export function parseRoute(hash: string): Route {
   const [, page, id, tab] = hash.replace(/^#/, '').split('/')
   if (page === 'servers' && id) {
-    return { page: 'server', id, tab: tab === 'settings' ? 'settings' : 'users' }
+    return { page: 'server', id, tab: TABS.includes(tab as Tab) ? (tab as Tab) : 'users' }
   }
   return { page: 'servers' }
 }
 
-export function navigate(route: Route) {
+export function navigate(route: { page: 'servers' } | { page: 'server'; id: string | number; tab: Tab }) {
   window.location.hash =
-    route.page === 'servers' ? '/' : `/servers/${route.id}${route.tab === 'settings' ? '/settings' : ''}`
+    route.page === 'servers'
+      ? '/'
+      : `/servers/${route.id}${route.tab === 'users' ? '' : `/${route.tab}`}`
 }
 
 export function useRoute(): Route {
