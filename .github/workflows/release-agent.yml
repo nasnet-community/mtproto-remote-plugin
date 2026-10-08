@@ -1,0 +1,47 @@
+name: Agent release
+
+on:
+  push:
+    tags:
+      - 'agent-v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  agent:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Version
+        run: echo "VERSION=${GITHUB_REF_NAME#agent-v}" >> "$GITHUB_ENV"
+
+      - name: Test
+        run: go test -race -count=1 ./...
+
+      # the flags matter: the pins check rebuilds with exactly these
+      - name: Build
+        run: |
+          set -euo pipefail
+          mkdir dist
+          for arch in amd64 arm64; do
+            CGO_ENABLED=0 GOOS=linux GOARCH=$arch go build -trimpath -buildvcs=false \
+              -ldflags "-s -w -X main.version=$VERSION" \
+              -o "dist/mtproto-agent-linux-$arch" ./cmd/mtproto-agent
+            size=$(stat -c %s "dist/mtproto-agent-linux-$arch")
+            [ "$size" -lt 15000000 ] || { echo "::error::the $arch agent is $size bytes"; exit 1; }
+          done
+          (cd dist && sha256sum mtproto-agent-linux-* | tee SHA256SUMS)
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --title "Agent $VERSION" \
+            --notes "MTProto agent $VERSION. The SHA-256 sums are in SHA256SUMS; the panels pin them."

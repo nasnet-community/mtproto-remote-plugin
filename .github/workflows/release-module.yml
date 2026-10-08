@@ -1,0 +1,38 @@
+name: Module release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: The Telegram address list is the real one
+        run: |
+          if grep -q PLACEHOLDER tgnet/pinned_cidr.txt; then
+            echo "::error::tgnet/pinned_cidr.txt is still the placeholder"; exit 1
+          fi
+
+      - name: An agent release is pinned
+        run: |
+          if grep -q 'AgentVersion = "0.0.0-dev"' release/release.go; then
+            echo "::error::release/release.go pins no agent release"; exit 1
+          fi
+
+      - name: Everything passes, and the pinned agent still rebuilds byte for byte
+        run: |
+          go vet ./...
+          go mod tidy -diff
+          go test -race -count=1 ./...
+          CHECK_PINS=1 go test -count=1 -run TestPinnedAgent ./release
