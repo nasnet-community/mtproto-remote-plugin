@@ -1230,3 +1230,24 @@ func TestAddressesTheServiceRefuses(t *testing.T) {
 		}
 	}
 }
+
+// fetching the builds can take a while on a slow router: it shows as a step, not a stall
+func TestRepairAndUpdateShowTheirDownload(t *testing.T) {
+	r := relaytest.NewRig()
+	r.Installed(t)
+	r.Links.RedialUp = true
+	jid, err := r.Svc.StartRepair(context.Background(), 1, relayops.Login{Password: "pw"}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v := r.Wait(t, jid); v.State != relayops.JobOK || v.Steps[0].Name != "download" || v.Steps[0].State != "ok" {
+		t.Fatalf("repair = %+v", v)
+	}
+	id, err := r.Svc.StartUpdate(context.Background(), 1, "telemt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v := r.Wait(t, id); v.State != relayops.JobOK || v.Steps[0].Name != "download" || v.Steps[0].State != "ok" || v.Steps[1].Name != "upload" {
+		t.Fatalf("update = %+v", v)
+	}
+}

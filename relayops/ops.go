@@ -94,9 +94,13 @@ func (s *Service) StartUpdate(ctx context.Context, nodeID uint, kind string) (st
 	if s.upToDate(nodeID, row.Arch, kind) {
 		return "", ErrUpToDate
 	}
+	steps := []string{"download", "upload"}
+	if kind == "agent" {
+		steps = append(steps, "restart", "commit")
+	}
 	return s.start("update-"+kind, []string{nodeKey(nodeID)}, func(ctx context.Context, j *job) error {
 		return s.runUpdate(ctx, j, row, kind)
-	})
+	}, planned(steps...))
 }
 
 func (s *Service) runUpdate(ctx context.Context, j *job, row *Record, kind string) error {
@@ -104,6 +108,7 @@ func (s *Service) runUpdate(ctx context.Context, j *job, row *Record, kind strin
 	var bin installer.Bin
 	var ver string
 	var err error
+	j.step(installer.Step{Name: "download", State: "running"})
 	if kind == "agent" {
 		bin, err = s.cfg.Bins.Agent(ctx, arch)
 		ver = release.AgentVersion
@@ -115,6 +120,7 @@ func (s *Service) runUpdate(ctx context.Context, j *job, row *Record, kind strin
 		j.step(installer.Step{Name: "download", State: "failed", Detail: err.Error()})
 		return err
 	}
+	j.step(installer.Step{Name: "download", State: "ok"})
 	j.setNode(row.NodeID)
 	// which process answers now: only a different one may be committed later
 	var before ctrl.Status
@@ -140,7 +146,7 @@ func (s *Service) runUpdate(ctx context.Context, j *job, row *Record, kind strin
 	}
 	defer rc.Close()
 	req := ctrl.UpdateRequest{Kind: kind, Arch: row.Arch, Size: bin.Size, SHA256: bin.SHA256, Ver: ver}
-	cctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	cctx, cancel := context.WithTimeout(ctx, uploadWait(bin.Size))
 	defer cancel()
 	var out map[string]any
 	if err := s.cfg.Links.CallRaw(cctx, row.NodeID, ctrl.MUpdate, req, rc, &out); err != nil {
@@ -202,6 +208,12 @@ func (s *Service) runUpdate(ctx context.Context, j *job, row *Record, kind strin
 	return err
 }
 
+// uploadWait gives an upload over the link at least 5 minutes, more for a big file
+// on a slow line: 15 MB of proxy at 400 kbit/s needs about 5 minutes on its own.
+func uploadWait(size int64) time.Duration {
+	return max(5*time.Minute, time.Duration(size/20_000+1)*time.Second)
+}
+
 // StartRotate: remember the new credentials, the agent switches, the panel follows, a new connection confirms.
 func (s *Service) StartRotate(ctx context.Context, nodeID uint) (string, error) {
 	row, err := s.cfg.Store.Get(ctx, nodeID)
@@ -213,7 +225,7 @@ func (s *Service) StartRotate(ctx context.Context, nodeID uint) (string, error) 
 	}
 	return s.start("rotate", []string{nodeKey(nodeID)}, func(ctx context.Context, j *job) error {
 		return s.runRotate(ctx, j, row)
-	})
+	}, planned("rotate", "verify"))
 }
 
 func (s *Service) runRotate(ctx context.Context, j *job, row *Record) error {
@@ -345,7 +357,7 @@ func (s *Service) StartAddress(ctx context.Context, nodeID uint, host string) (s
 	}
 	return s.start("address", []string{nodeKey(nodeID)}, func(ctx context.Context, j *job) error {
 		return s.runAddress(ctx, j, nodeID, from, host)
-	})
+	}, planned("reach"))
 }
 
 func (s *Service) runAddress(ctx context.Context, j *job, nodeID uint, from, to string) error {
@@ -397,7 +409,7 @@ func (s *Service) StartLinkPort(ctx context.Context, nodeID uint, port int) (str
 	}
 	return s.start("link-port", []string{nodeKey(nodeID)}, func(ctx context.Context, j *job) error {
 		return s.runLinkPort(ctx, j, nodeID, row.HubPort, port)
-	})
+	}, planned("open", "switch", "close"))
 }
 
 func (s *Service) runLinkPort(ctx context.Context, j *job, nodeID uint, from, to int) error {

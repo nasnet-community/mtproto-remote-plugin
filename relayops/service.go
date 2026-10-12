@@ -8,12 +8,15 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/nasnet-community/mtproto-remote-plugin/ctrl"
 	"github.com/nasnet-community/mtproto-remote-plugin/installer"
+	"github.com/nasnet-community/mtproto-remote-plugin/release"
 )
 
 // Login is how to reach a VPS over SSH. It lives in memory for one job only: it
@@ -99,7 +102,7 @@ func nodeKey(id uint) string  { return fmt.Sprintf("node %d", id) }
 func hostKey(h string) string { return "host " + strings.ToLower(h) }
 
 // start runs a job under a deadline, one per node or host: two on one box step on each other.
-func (s *Service) start(kind string, keys []string, fn func(ctx context.Context, j *job) error) (string, error) {
+func (s *Service) start(kind string, keys []string, fn func(ctx context.Context, j *job) error, opts ...jobOpt) (string, error) {
 	s.mu.Lock()
 	for _, k := range keys {
 		if s.busy[k] {
@@ -111,7 +114,7 @@ func (s *Service) start(kind string, keys []string, fn func(ctx context.Context,
 		s.busy[k] = true
 	}
 	s.mu.Unlock()
-	j := s.newJob(kind)
+	j := s.newJob(kind, opts...)
 	timeout := s.cfg.JobTimeout
 	if timeout == 0 {
 		timeout = jobTimeouts[kind]
@@ -141,19 +144,38 @@ const (
 )
 
 type JobView struct {
-	ID         string           `json:"id"`
-	Kind       string           `json:"kind"`
-	State      JobState         `json:"state"`
-	Steps      []installer.Step `json:"steps"`
-	Error      string           `json:"error,omitempty"`
-	NodeID     uint             `json:"node_id,omitempty"`
-	StartedAt  time.Time        `json:"started_at"`
-	FinishedAt *time.Time       `json:"finished_at,omitempty"`
+	ID    string           `json:"id"`
+	Kind  string           `json:"kind"`
+	State JobState         `json:"state"`
+	Steps []installer.Step `json:"steps"`
+	Error string           `json:"error,omitempty"`
+	// Target names what an install sets up before it has a node; empty otherwise
+	Target     string     `json:"target,omitempty"`
+	NodeID     uint       `json:"node_id,omitempty"`
+	StartedAt  time.Time  `json:"started_at"`
+	FinishedAt *time.Time `json:"finished_at,omitempty"`
 }
+
+// StepPending is a planned step the job has not reached.
+const StepPending = "pending"
 
 type job struct {
 	mu sync.Mutex
 	v  JobView
+}
+
+type jobOpt func(*job)
+
+// named sets the job's Target.
+func named(target string) jobOpt { return func(j *job) { j.v.Target = target } }
+
+// planned lists the steps a job expects, so a page can show what is left.
+func planned(names ...string) jobOpt {
+	return func(j *job) {
+		for _, n := range names {
+			j.v.Steps = append(j.v.Steps, installer.Step{Name: n, State: StepPending})
+		}
+	}
 }
 
 func (j *job) step(s installer.Step) {
@@ -162,6 +184,13 @@ func (j *job) step(s installer.Step) {
 	for i := range j.v.Steps {
 		if j.v.Steps[i].Name == s.Name {
 			j.v.Steps[i] = s
+			return
+		}
+	}
+	// one the plan did not know about (nftables) goes where the job has got to
+	for i := range j.v.Steps {
+		if j.v.Steps[i].State == StepPending {
+			j.v.Steps = slices.Insert(j.v.Steps, i, s)
 			return
 		}
 	}
@@ -181,9 +210,11 @@ func (j *job) finish(err error) {
 	j.v.FinishedAt = &now
 	if err != nil {
 		j.v.State, j.v.Error = JobFailed, err.Error()
-		return
+		return // the steps it never reached stay listed as not done
 	}
 	j.v.State = JobOK
+	// a planned step a successful job skipped did not need doing
+	j.v.Steps = slices.DeleteFunc(j.v.Steps, func(s installer.Step) bool { return s.State == StepPending })
 }
 
 func (j *job) snapshot() JobView {
@@ -194,10 +225,13 @@ func (j *job) snapshot() JobView {
 	return v
 }
 
-func (s *Service) newJob(kind string) *job {
+func (s *Service) newJob(kind string, opts ...jobOpt) *job {
 	b := make([]byte, 8)
 	rand.Read(b)
 	j := &job{v: JobView{ID: hex.EncodeToString(b), Kind: kind, State: JobRunning, StartedAt: time.Now()}}
+	for _, o := range opts {
+		o(j)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	// keep a bounded history: the UI only ever asks about recent jobs
@@ -220,6 +254,29 @@ func (s *Service) Job(id string) (JobView, bool) {
 		return JobView{}, false
 	}
 	return j.snapshot(), true
+}
+
+// Jobs is the running jobs and those that ended within the last hour, newest first.
+func (s *Service) Jobs(limit int) []JobView {
+	s.mu.Lock()
+	all := make([]*job, 0, len(s.jobs))
+	for _, j := range s.jobs {
+		all = append(all, j)
+	}
+	s.mu.Unlock()
+	out := []JobView{}
+	for _, j := range all {
+		v := j.snapshot()
+		if v.State == JobRunning || (v.FinishedAt != nil && time.Since(*v.FinishedAt) < time.Hour) {
+			out = append(out, v)
+		}
+	}
+	// sort.Slice, not slices.SortFunc: each new type costs the router binary its own sort
+	sort.Slice(out, func(i, j int) bool { return out[i].StartedAt.After(out[j].StartedAt) })
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out
 }
 
 // --- validation ---
@@ -353,13 +410,18 @@ func (s *Service) StartInstall(ctx context.Context, p InstallParams) (string, er
 	if err != nil {
 		return "", err
 	}
+	plan := []string{"download", "check", "verify", "account", "upload", "directories", "disguise", "credentials", "service", "register", "link"}
+	if checked {
+		// tested before the job began, so it heads the list
+		plan = append([]string{"disguise"}, slices.DeleteFunc(plan, func(n string) bool { return n == "disguise" })...)
+	}
 	return s.start("install", []string{key}, func(ctx context.Context, j *job) error {
 		defer p.Login.forget() // the secrets end with the job
 		if checked {
 			j.step(installer.Step{Name: "disguise", State: "ok", Detail: p.Disguise})
 		}
 		return s.runInstall(ctx, j, p, checked)
-	})
+	}, named(p.Name), planned(plan...))
 }
 
 // coverWait caps the test before an install: the SSH login plus the site's own checks.
@@ -414,18 +476,10 @@ func (s *Service) runInstall(ctx context.Context, j *job, p InstallParams, cover
 	if err != nil {
 		return err
 	}
-	j.step(installer.Step{Name: "download", State: "running"})
-	agent, err := s.cfg.Bins.Agent(ctx, arch)
+	agent, telemt, err := s.download(ctx, j, arch)
 	if err != nil {
-		j.step(installer.Step{Name: "download", State: "failed", Detail: err.Error()})
 		return err
 	}
-	telemt, err := s.cfg.Bins.Telemt(ctx, arch)
-	if err != nil {
-		j.step(installer.Step{Name: "download", State: "failed", Detail: err.Error()})
-		return err
-	}
-	j.step(installer.Step{Name: "download", State: "ok"})
 
 	creds, err := installer.NewCreds()
 	if err != nil {
@@ -546,7 +600,21 @@ func (s *Service) StartRepair(ctx context.Context, nodeID uint, l Login, reset b
 	return s.start("repair", []string{nodeKey(nodeID), hostKey(host)}, func(ctx context.Context, j *job) error {
 		defer l.forget()
 		return s.runRepair(ctx, j, row, l, reset)
-	})
+	}, planned("download", "check", "verify", "account", "upload", "directories", "disguise", "credentials", "service", "link"))
+}
+
+// download fetches both builds as the job's "download" step: a slow fetch shows, not a stall.
+func (s *Service) download(ctx context.Context, j *job, arch release.Arch) (agent, telemt installer.Bin, err error) {
+	j.step(installer.Step{Name: "download", State: "running"})
+	if agent, err = s.cfg.Bins.Agent(ctx, arch); err == nil {
+		telemt, err = s.cfg.Bins.Telemt(ctx, arch)
+	}
+	if err != nil {
+		j.step(installer.Step{Name: "download", State: "failed", Detail: err.Error()})
+		return agent, telemt, err
+	}
+	j.step(installer.Step{Name: "download", State: "ok"})
+	return agent, telemt, nil
 }
 
 // fill takes the rest from the record; sshd may have moved, so the caller's port and key win.
@@ -568,11 +636,7 @@ func (s *Service) runRepair(ctx context.Context, j *job, row *Record, l Login, r
 	if err != nil {
 		return err
 	}
-	agent, err := s.cfg.Bins.Agent(ctx, arch)
-	if err != nil {
-		return err
-	}
-	telemt, err := s.cfg.Bins.Telemt(ctx, arch)
+	agent, telemt, err := s.download(ctx, j, arch)
 	if err != nil {
 		return err
 	}
@@ -656,7 +720,7 @@ func (s *Service) StartUninstall(ctx context.Context, nodeID uint, l *Login, for
 	return s.start("uninstall", keys, func(ctx context.Context, j *job) error {
 		defer l.forget()
 		return s.runUninstall(ctx, j, nodeID, l, linkUp, force)
-	})
+	}, planned("remove", "forget"))
 }
 
 func (s *Service) runUninstall(ctx context.Context, j *job, nodeID uint, l *Login, linkUp, force bool) error {
