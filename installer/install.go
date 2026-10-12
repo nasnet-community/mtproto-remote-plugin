@@ -64,6 +64,7 @@ type Facts struct {
 	HasSudo    bool
 	HasSystemd bool
 	HasNft     bool
+	HasGzip    bool   // uploads go compressed when the box can unpack them
 	PkgMgr     string // apt-get | dnf | yum | ""
 	Listening  map[int]bool
 	Installed  bool // an agent from an earlier install is present, credentials and all
@@ -90,7 +91,7 @@ func Inspect(ctx context.Context, c *Conn) (Facts, error) {
 		_, err := c.Run(ctx, "command -v "+shq(tool), nil)
 		return err == nil
 	}
-	p.HasSystemd, p.HasNft, p.HasSudo = has("systemctl"), has("nft"), has("sudo")
+	p.HasSystemd, p.HasNft, p.HasSudo, p.HasGzip = has("systemctl"), has("nft"), has("sudo"), has("gzip")
 	switch {
 	case has("apt-get"):
 		p.PkgMgr = "apt-get"
@@ -187,7 +188,7 @@ type Request struct {
 
 type Step struct {
 	Name   string `json:"name"`
-	State  string `json:"state"` // running | ok | failed
+	State  string `json:"state"` // pending | running | ok | failed
 	Detail string `json:"detail,omitempty"`
 }
 
@@ -301,12 +302,13 @@ func install(ctx context.Context, c *Conn, req Request, progress Progress, res *
 		return err
 	}
 
-	// 5. binaries
+	// 5. binaries, one after the other: a failed agent upload must not cost the proxy's too
 	done = r.step("upload")
-	err = firstErr(
-		push(ctx, c, req.Agent, AgentBin),
-		push(ctx, c, req.Telemt, TelemtBin),
-	)
+	up := &upload{step: "upload", total: req.Agent.Size + req.Telemt.Size, gzip: facts.HasGzip, progress: progress, start: time.Now()}
+	err = push(ctx, c, req.Agent, AgentBin, up)
+	if err == nil {
+		err = push(ctx, c, req.Telemt, TelemtBin, up)
+	}
 	if err := done("", err); err != nil {
 		return err
 	}
@@ -454,8 +456,8 @@ func ensureUser(ctx context.Context, c *Conn, facts Facts) (uid, gid uint32, err
 }
 
 // push uploads b to a temp file on the VPS, checks its hash THERE, and only then
-// moves it into place.
-func push(ctx context.Context, c *Conn, b Bin, dest string) error {
+// moves it into place. With up.gzip the bytes travel compressed and are unpacked on arrival.
+func push(ctx context.Context, c *Conn, b Bin, dest string, up *upload) error {
 	ctx, cancel := context.WithTimeout(ctx, uploadTimeout)
 	defer cancel()
 	rc, err := b.Open()
@@ -464,7 +466,17 @@ func push(ctx context.Context, c *Conn, b Bin, dest string) error {
 	}
 	defer rc.Close()
 	tmp := dest + ".upload"
-	if _, err := c.Root(ctx, "cat > "+shq(tmp)+" && chmod 0755 "+shq(tmp), rc); err != nil {
+	var src io.Reader = rc
+	recv := "cat > " + shq(tmp)
+	if up != nil {
+		src = up.counted(rc)
+		if up.gzip {
+			pr := up.gzipped(src)
+			defer pr.Close() // a session that stopped reading must not strand the compressor
+			src, recv = pr, "gzip -dc > "+shq(tmp)
+		}
+	}
+	if _, err := c.Root(ctx, recv+" && chmod 0755 "+shq(tmp), src); err != nil {
 		return err
 	}
 	out, err := c.Root(ctx, "sha256sum "+shq(tmp), nil)
