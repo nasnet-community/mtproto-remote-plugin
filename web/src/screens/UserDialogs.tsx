@@ -208,6 +208,15 @@ export function UserDialog({
 
 /** The QR code and the link it holds, ready to send. */
 export function ShareDialog({ user, onClose }: { user: User; onClose: () => void }) {
+  // Local MTProto's links need the router's address and port first
+  if (/[?&](server=&|port=0&)/.test(user.links.https))
+    return (
+      <Dialog onClose={onClose} title={`Share ${user.name}'s proxy`} footer={<Button onClick={onClose}>Close</Button>}>
+        <p className="text-[13px] text-muted">
+          This link has no address yet, so it can't work. Turn on IP Cloud in the router, or type an address under Settings, then share it.
+        </p>
+      </Dialog>
+    )
   return (
     <Dialog onClose={onClose} title={`Share ${user.name}'s proxy`} description={`Anyone with this link can use the proxy as ${user.name}.`}>
       <div className="flex flex-col items-center gap-4">

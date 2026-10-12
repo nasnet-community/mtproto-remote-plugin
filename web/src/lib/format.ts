@@ -318,7 +318,7 @@ export function crashCause(lines: string[]): { text: string; at: string | null }
   if (!l) return null
   if (/address already in use/i.test(l.msg)) {
     const port = /:(\d+)\D*address already in use/i.exec(l.msg)?.[1] ?? '443'
-    return { text: `Port ${port} is taken by another program on the server.`, at: l.at }
+    return { text: `Port ${port} is taken by another program on the ${__LOCAL__ ? 'router' : 'server'}.`, at: l.at }
   }
   const text = l.msg.charAt(0).toUpperCase() + l.msg.slice(1)
   return { text: /[.!]$/.test(text) ? text : `${text}.`, at: l.at }
@@ -398,6 +398,9 @@ const EVENTS: Record<string, string> = {
   push_failed: "Couldn't apply settings",
   link_up: 'Link up',
   link_down: 'Link connection down',
+  disguise_down: 'Cover site failing',
+  disguise_up: 'Cover site working again',
+  port_changed: 'Router port changed',
 }
 
 export const eventLabel = (kind: string) => EVENTS[kind] ?? kind.replace(/_/g, ' ')

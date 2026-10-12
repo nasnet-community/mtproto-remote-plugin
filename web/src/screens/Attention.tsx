@@ -6,7 +6,8 @@ import { clockOrDay, relativeTime } from '../lib/format'
 import type { Tab } from '../hooks/useRoute'
 
 type Act = { label: string; primary?: boolean; run: () => void }
-type Item = { tone: 'danger' | 'warn' | 'info'; title: string; detail: ReactNode; acts?: Act[] }
+export type AttentionItem = { tone: 'danger' | 'warn' | 'info'; title: string; detail: ReactNode; acts?: Act[] }
+type Item = AttentionItem
 
 export interface AttentionActions {
   repair: () => void
@@ -17,7 +18,7 @@ export interface AttentionActions {
   open: (tab: Tab) => void
 }
 
-const sentence = (s: string) => {
+export const sentence = (s: string) => {
   const t = s.charAt(0).toUpperCase() + s.slice(1)
   return /[.!?]$/.test(t) ? t : `${t}.`
 }
@@ -103,7 +104,10 @@ const ICON = {
 
 /** One list above the tabs instead of stacked banners. */
 export function Attention(props: { server: Server; tab: Tab; cause: { text: string; at: string | null } | null; actions: AttentionActions }) {
-  const list = items(props.server, props.tab, props.cause, props.actions)
+  return <AttentionList list={items(props.server, props.tab, props.cause, props.actions)} />
+}
+
+export function AttentionList({ list }: { list: AttentionItem[] }) {
   if (!list.length) return null
   return (
     <section aria-label="Needs attention" className="flex flex-col gap-2">

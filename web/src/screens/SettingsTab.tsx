@@ -10,7 +10,7 @@ import { Badge, Button, Card, Confirm, Dialog, Disclosure, ErrorBox, Field, Impa
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e))
 const NEEDS_LINK = 'Needs the link to this server'
 
-function Row({ label, children }: { label: string; children: ReactNode }) {
+export function Row({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="grid gap-1 py-2.5 sm:grid-cols-[180px_1fr] sm:gap-4">
       <dt className="text-[13px] text-muted">{label}</dt>
@@ -19,7 +19,7 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
   )
 }
 
-function Head({ title, hint, children }: { title: string; hint: string; children?: ReactNode }) {
+export function Head({ title, hint, children }: { title: string; hint: string; children?: ReactNode }) {
   return (
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div className="min-w-0">
@@ -88,7 +88,15 @@ export function CoverDialog({ server, onClose, onChanged }: { server: Server; on
       <div className="flex flex-col gap-3">
         <Field
           label="New cover site"
-          hint={wanted && !valid ? (wanted === server.coverDomain ? 'That is the cover site now.' : 'Give a domain name, like www.example.org.') : 'The server checks it before it is used.'}
+          hint={
+            wanted && !valid
+              ? wanted === server.coverDomain
+                ? 'That is the cover site now.'
+                : 'Give a domain name, like www.example.org.'
+              : __LOCAL__
+                ? 'The router checks it over the domestic link before it is used.'
+                : 'The server checks it before it is used.'
+          }
         >
           {(p) => (
             <div className="flex gap-2">
@@ -182,12 +190,12 @@ export function LinkPortDialog({ server, onClose, onStart }: { server: Server; o
   )
 }
 
-function CoverCard({ server, onChange }: { server: Server; onChange: () => void }) {
+export function CoverCard({ server, onChange }: { server: Server; onChange: () => void }) {
   const last = server.agent?.cover
   const down = server.link.state === 'down'
   return (
     <Card className="flex flex-col gap-2 p-4">
-      <Head title="Cover site" hint="The proxy and its link look like visits to this site.">
+      <Head title="Cover site" hint={__LOCAL__ ? 'Anyone probing the proxy sees this site.' : 'The proxy and its link look like visits to this site.'}>
         <Button size="sm" disabled={down} title={down ? NEEDS_LINK : undefined} onClick={onChange}>
           <Pencil className="h-3.5 w-3.5" /> Change cover site…
         </Button>
@@ -349,7 +357,7 @@ const LEVELS: [LogLevel, string][] = [
   ['debug', 'Debug'],
 ]
 
-function AdvancedCard({ server, onChanged }: { server: Server; onChanged: () => void }) {
+export function AdvancedCard({ server, onChanged }: { server: Server; onChanged: () => void }) {
   const toast = useToast()
   const o = server.proxyOptions
   const [names, setNames] = useState(o.extraCoverNames)
@@ -417,7 +425,7 @@ function AdvancedCard({ server, onChanged }: { server: Server; onChanged: () => 
 
   return (
     <Card className="p-4">
-      <Disclosure title="Advanced proxy options" hint="For tuning. The defaults suit most servers.">
+      <Disclosure title="Advanced proxy options" hint={`For tuning. The defaults suit most ${__LOCAL__ ? 'uses' : 'servers'}.`}>
         <div className="flex flex-col gap-4 border-t border-border pt-4">
           <div className="flex flex-col gap-1.5">
             <span className="text-[13px] font-medium text-muted">Extra cover names</span>

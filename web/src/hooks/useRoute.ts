@@ -3,12 +3,16 @@ import { useEffect, useState } from 'react'
 export type Tab = 'users' | 'status' | 'settings' | 'logs'
 const TABS: Tab[] = ['users', 'status', 'settings', 'logs']
 
-export type Route = { page: 'servers' } | { page: 'server'; id: string; tab: Tab }
+export type Route = { page: 'servers' } | { page: 'server'; id: string; tab: Tab } | { page: 'local'; tab: Tab }
+
+const asTab = (t: string | undefined): Tab => (TABS.includes(t as Tab) ? (t as Tab) : 'users')
 
 export function parseRoute(hash: string): Route {
   const [, page, id, tab] = hash.replace(/^#/, '').split('/')
+  // Local MTProto has the one proxy: #/, #/status, #/settings, #/logs
+  if (__LOCAL__) return { page: 'local', tab: asTab(page) }
   if (page === 'servers' && id) {
-    return { page: 'server', id, tab: TABS.includes(tab as Tab) ? (tab as Tab) : 'users' }
+    return { page: 'server', id, tab: asTab(tab) }
   }
   return { page: 'servers' }
 }
@@ -40,10 +44,10 @@ function leave(go: () => void) {
   else go()
 }
 
-export function navigate(route: { page: 'servers' } | { page: 'server'; id: string | number; tab: Tab }) {
+export function navigate(route: { page: 'servers' } | { page: 'server'; id: string | number; tab: Tab } | { page: 'local'; tab: Tab }) {
   leave(() => {
-    window.location.hash =
-      route.page === 'servers' ? '/' : `/servers/${route.id}${route.tab === 'users' ? '' : `/${route.tab}`}`
+    const tail = route.page === 'servers' || route.tab === 'users' ? '' : `/${route.tab}`
+    window.location.hash = route.page === 'servers' ? '/' : route.page === 'local' || __LOCAL__ ? tail || '/' : `/servers/${route.id}${tail}`
   })
 }
 

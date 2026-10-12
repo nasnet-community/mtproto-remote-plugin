@@ -7,6 +7,7 @@ import { navigate, onLeave, useRoute } from './hooks/useRoute'
 import { Button, Confirm } from './components/ui'
 import { ServersScreen } from './screens/ServersScreen'
 import { ServerScreen } from './screens/ServerScreen'
+import { LocalScreen } from './screens/LocalScreen'
 
 function ThemeToggle() {
   const [theme, setTheme] = useState(() => document.documentElement.dataset.theme ?? 'dark')
@@ -53,27 +54,31 @@ export function App() {
             href="#/"
             onClick={(e) => {
               e.preventDefault()
-              navigate({ page: 'servers' })
+              navigate(__LOCAL__ ? { page: 'local', tab: 'users' } : { page: 'servers' })
             }}
             className="flex shrink-0 items-center gap-2.5 font-semibold"
           >
             <TelegramMtprotoLogo size={30} />
-            MTProto Remote
+            {__LOCAL__ ? 'Local MTProto' : 'MTProto Remote'}
           </a>
-          <span className="hidden truncate text-xs text-faint md:inline">Proxy servers that reach Telegram through this router</span>
+          <span className="hidden truncate text-xs text-faint md:inline">
+            {__LOCAL__ ? 'A Telegram proxy that runs on this router' : 'Proxy servers that reach Telegram through this router'}
+          </span>
           <div className="ml-auto flex items-center gap-1 sm:gap-2">
-            <JobTray />
+            {!__LOCAL__ && <JobTray />}
             {config.data && <span className="hidden text-xs text-faint sm:inline">v{config.data.version}</span>}
             <ThemeToggle />
           </div>
         </div>
       </header>
       <main className="mx-auto max-w-6xl px-4 py-6">
-        {route.page === 'servers' ? (
+        {__LOCAL__ ? (
+          <LocalScreen tab={route.page === 'servers' ? 'users' : route.tab} />
+        ) : route.page === 'servers' ? (
           <ServersScreen config={config.data} onChanged={reloadConfig} />
-        ) : (
+        ) : route.page === 'server' ? (
           <ServerScreen key={route.id} id={route.id} tab={route.tab} config={config.data} onConfigChanged={reloadConfig} />
-        )}
+        ) : null}
       </main>
       <LeaveQuestion />
     </div>

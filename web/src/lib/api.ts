@@ -277,7 +277,8 @@ export interface Traffic {
 
 type Started = { jobId: string }
 
-const srv = (id: number) => `servers/${id}`
+// Local MTProto has one proxy, at api/local; its routes below it match a server's
+const srv = (id: number) => (__LOCAL__ ? 'local' : `servers/${id}`)
 
 export const api = {
   config: () => request<AppConfig>('GET', 'config'),
@@ -319,6 +320,121 @@ export const users = {
   resetUsage: (id: number, name: string) => request<User>('POST', `${user(id, name)}/reset-usage`),
   bulk: (id: number, action: BulkAction, names: string[], days?: number) =>
     request<{ changed: number }>('POST', `${srv(id)}/users/bulk`, { action, names, ...(days ? { days } : {}) }),
+}
+
+// --- Local MTProto --------------------------------------------------------------
+
+/** Where links point, and what the router script last said. */
+export interface LocalAddress {
+  /** what links use; "" while it isn't known */
+  host: string
+  /** what links use; 0 while it isn't known */
+  port: number
+  customHost: string
+  /** 0: the router's own port */
+  customPort: number
+  routerPort: number
+  cloudName: string
+  publicAddress: string
+  /** the domestic link's address on the router */
+  wanAddress: string
+  cloudStatus: string
+  domestic: boolean
+  /** the router script has written its state */
+  reported: boolean
+  reportedAt: string | null
+  /** a new port the router hasn't taken yet */
+  newPortAskedAt: string | null
+}
+
+export interface LocalProxy {
+  version: string
+  arch: string
+  createdAt: string
+  /** "" until the first-run setup */
+  coverDomain: string
+  userCount: number
+  proxyStopped: boolean
+  proxyOptions: ProxyOptions
+  maxConns: { value: number; default: number; min: number; max: number }
+  proxy: {
+    running: boolean
+    restarts: number
+    uptimeSec: number
+    lastExit: string
+    crashLoop: boolean
+    /** why it is kept off */
+    held: string
+    applyError: string
+    version: string
+    /** how telemt was built: "" for telemt's own release */
+    build: string
+    rssBytes: number
+    port: number
+    reportedAt: string
+  }
+  cover: { domain: string; ok: boolean; checkedAt: string | null; error: string }
+  address: LocalAddress
+  usage: ServerUsage
+  events: ServerEvent[]
+  uptimeSec: number
+  rssBytes: number
+}
+
+export interface LocalSettings {
+  coverDomain?: string
+  maxConns?: number
+  proxyOptions?: Partial<ProxyOptions>
+  linkHost?: string
+  linkPort?: number
+}
+
+export const local = {
+  get: () => request<LocalProxy>('GET', 'local'),
+  setup: (coverDomain: string, firstUser: string) => request<LocalProxy>('POST', 'local/setup', { coverDomain, firstUser }),
+  settings: (s: LocalSettings) => request<LocalProxy>('PATCH', 'local/settings', s),
+  newPort: () => request<LocalProxy>('POST', 'local/new-port'),
+}
+
+/** The proxy as the screens shared with MTProto Remote read a server. */
+export function asServer(p: LocalProxy): Server {
+  const t = p.proxy
+  return {
+    id: 1,
+    name: 'Local MTProto',
+    host: p.address.host,
+    sshPort: 0,
+    sshUser: '',
+    hostKey: '',
+    registered: true,
+    createdAt: p.createdAt,
+    coverDomain: p.coverDomain,
+    maxStreams: p.maxConns.value,
+    hubPort: 0,
+    arch: p.arch,
+    agentVersion: p.version,
+    telemtVersion: t.version,
+    lastSeenAt: null,
+    userCount: p.userCount,
+    link: { state: 'up', up: 1, total: 1, streams: 0, relayed: 0, dialFailures: 0, violations: 0, bytesToDc: 0, bytesFromDc: 0, conns: [] },
+    agent: {
+      version: p.version,
+      telemtVersion: t.version,
+      uptimeSec: p.uptimeSec,
+      rssBytes: p.rssBytes,
+      stateRev: '',
+      reportedAt: t.reportedAt,
+      telemt: { running: t.running, restarts: t.restarts, uptimeSec: t.uptimeSec, lastExit: t.lastExit, crashLoop: t.crashLoop, held: t.held },
+      capture: { rules: true, active: 0, rejected: 0 },
+      cover: p.cover,
+    },
+    sync: { desiredRev: '', appliedRev: '', lastPushAt: null, lastPushError: t.applyError, healthy: !t.applyError },
+    events: p.events,
+    proxyStopped: p.proxyStopped,
+    proxyOptions: p.proxyOptions,
+    updates: { agent: false, telemt: false, agentVersion: '', telemtVersion: '' },
+    usage: p.usage,
+  }
 }
 
 /**

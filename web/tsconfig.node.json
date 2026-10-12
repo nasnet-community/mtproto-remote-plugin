@@ -12,5 +12,5 @@
     "noEmit": true,
     "types": ["node"]
   },
-  "include": ["vite.config.ts", "tailwind.config.ts", "mock-api.ts", "playwright.config.ts", "e2e"]
+  "include": ["vite.config.ts", "tailwind.config.ts", "mock-api.ts", "mock-local.ts", "playwright.config.ts", "e2e", "src/flavor.d.ts"]
 }

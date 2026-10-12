@@ -572,7 +572,7 @@ export function UsersTab({ server }: { server: Server }) {
             void reload()
           }}
         >
-          <p>Their link stops working and the user is removed from the server.</p>
+          <p>Their link stops working and the user is removed from the {__LOCAL__ ? 'proxy' : 'server'}.</p>
         </Confirm>
       )}
       {modal?.kind === 'bulk-delete' && (
@@ -584,7 +584,8 @@ export function UsersTab({ server }: { server: Server }) {
           onConfirm={() => bulk('delete', modal.names)}
         >
           <p>
-            {nameList(modal.names, 6)} {modal.names.length === 1 ? 'loses their link and is' : 'lose their links and are'} removed from the server.
+            {nameList(modal.names, 6)} {modal.names.length === 1 ? 'loses their link and is' : 'lose their links and are'} removed from the{' '}
+            {__LOCAL__ ? 'proxy' : 'server'}.
           </p>
         </Confirm>
       )}

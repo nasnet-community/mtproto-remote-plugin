@@ -5,7 +5,7 @@ import { eventLabel, formatBytes, formatCount, formatDuration, formatRate, heldR
 import { useNow, usePoll } from '../hooks/usePoll'
 import { Badge, Card, cx, type Tone } from '../components/ui'
 
-function Section({ title, children, foot }: { title: string; children: ReactNode; foot?: string }) {
+export function Section({ title, children, foot }: { title: string; children: ReactNode; foot?: string }) {
   return (
     <Card className="p-4">
       <h2 className="font-semibold">{title}</h2>
@@ -18,7 +18,7 @@ function Section({ title, children, foot }: { title: string; children: ReactNode
 const TEXT: Partial<Record<Tone, string>> = { danger: 'font-medium text-bad-text', warn: 'font-medium text-warn-text' }
 
 /** A row; a bad number gets its tone and a hint that says what it means. */
-function Item({ label, children, tone, hint }: { label: string; children: ReactNode; tone?: Tone; hint?: string | false }) {
+export function Item({ label, children, tone, hint }: { label: string; children: ReactNode; tone?: Tone; hint?: string | false }) {
   return (
     <div className="py-2 text-[13px]">
       <div className="flex items-baseline justify-between gap-3">
@@ -70,7 +70,7 @@ function verdict(s: Server) {
   return { title, chips: [proxy, link, rules, cover] }
 }
 
-const CHIP: Record<Tone, [string, string, string]> = {
+export const CHIP: Record<Tone, [string, string, string]> = {
   online: ['bg-ok-tint', 'bg-ok', 'text-ok-text'],
   warn: ['bg-warn-tint', 'bg-warn', 'text-warn-text'],
   danger: ['bg-bad-tint', 'bg-bad', 'text-bad-text'],

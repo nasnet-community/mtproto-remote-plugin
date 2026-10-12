@@ -6,7 +6,10 @@
   "scripts": {
     "dev": "vite",
     "dev:mock": "MOCK=1 vite",
+    "dev:local": "PLUGIN=local vite",
+    "dev:local:mock": "PLUGIN=local MOCK=1 vite",
     "build": "tsc -b && vite build",
+    "build:local": "tsc -b && PLUGIN=local vite build",
     "typecheck": "tsc -b",
     "test": "vitest run",
     "e2e": "playwright test"
