@@ -128,6 +128,8 @@ type Settings struct {
 	// --- server tuning ----------------------------------------------------
 	LogLevel      string `json:"log_level"`      // [general] log_level: debug|verbose|normal|silent
 	ListenBacklog int    `json:"listen_backlog"` // [server] listen_backlog; 0 => telemt default
+	// MaxConnections is [server] max_connections, the client connections held at once; 0 => telemt default
+	MaxConnections int `json:"max_connections"`
 
 	// --- loopback ports ---------------------------------------------------
 	MetricsPort int `json:"metrics_port"` // Prometheus scrape port; 0 => 14300+id

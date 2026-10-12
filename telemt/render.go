@@ -105,6 +105,9 @@ func Render(in RenderInput) (Rendered, error) {
 	if s.ListenBacklog > 0 {
 		w("listen_backlog = %d\n", s.ListenBacklog)
 	}
+	if s.MaxConnections > 0 {
+		w("max_connections = %d\n", s.MaxConnections)
+	}
 	w("metrics_listen = %s\n", tomlString(fmt.Sprintf("127.0.0.1:%d", in.MetricsPort())))
 	w("metrics_whitelist = [\"127.0.0.1/32\"]\n")
 	w("[server.api]\n")

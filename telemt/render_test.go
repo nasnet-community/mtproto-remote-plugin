@@ -224,3 +224,26 @@ func TestTheCoverSiteGoesThroughTheAgentsSocket(t *testing.T) {
 		t.Errorf("telemt still looks for its public address: %v", net)
 	}
 }
+
+func TestTheConnectionLimitIsWrittenOnlyWhenSet(t *testing.T) {
+	in := baseInput()
+	in.Settings.MaxConnections = 300
+	r, err := Render(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(r.Core, "\nmax_connections = 300\n") {
+		t.Fatalf("no limit in:\n%s", r.Core)
+	}
+	var cfg struct {
+		Server struct {
+			MaxConnections int `toml:"max_connections"`
+		} `toml:"server"`
+	}
+	if _, err := toml.Decode(r.Config(), &cfg); err != nil || cfg.Server.MaxConnections != 300 {
+		t.Fatalf("parsed = %+v, %v", cfg, err)
+	}
+	if r, _ := Render(baseInput()); strings.Contains(r.Core, "max_connections") {
+		t.Fatal("an unset limit is written")
+	}
+}
