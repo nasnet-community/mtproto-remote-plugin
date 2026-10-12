@@ -52,8 +52,11 @@ type Config struct {
 
 	StatusEvery time.Duration // hubnode defaults when zero
 	StatsEvery  time.Duration
-	Log         *slog.Logger
-	Now         func() time.Time
+	// FlushEvery is how often counted usage is written to the router's flash (default 5 min)
+	FlushEvery time.Duration
+	History    *store.History // finished days; nil keeps none
+	Log        *slog.Logger
+	Now        func() time.Time
 }
 
 // Event is one line of a server's history for the UI.
@@ -96,6 +99,9 @@ type entry struct {
 	seen time.Time       // when versions/last-seen were last stored
 
 	push sync.Mutex // one read-and-set of the users at a time, so an older read never lands last
+
+	usage   *usage
+	flushMu sync.Mutex // one usage write at a time
 }
 
 func New(cfg Config) *Manager {
@@ -107,6 +113,9 @@ func New(cfg Config) *Manager {
 	}
 	if cfg.Now == nil {
 		cfg.Now = time.Now
+	}
+	if cfg.FlushEvery == 0 {
+		cfg.FlushEvery = 5 * time.Minute
 	}
 	if cfg.Dial == nil || cfg.DialDC == nil {
 		d := &net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}
@@ -135,18 +144,26 @@ func (m *Manager) Start(ctx context.Context) error {
 			m.cfg.Log.Warn("could not start a server's link", "server", srv.ID, "err", err)
 		}
 	}
+	go m.flushLoop(ctx.Done())
 	return nil
 }
 
-// Stop ends every link and waits for them.
+// Stop ends every link, waits for them and writes what they counted.
 func (m *Manager) Stop() {
 	m.mu.Lock()
+	es := make([]*entry, 0, len(m.entries))
 	for _, e := range m.entries {
 		e.cancel()
+		es = append(es, e)
 	}
 	m.entries = map[uint]*entry{}
 	m.mu.Unlock()
 	m.wg.Wait()
+	for _, e := range es {
+		if err := m.flush(e); err != nil {
+			m.cfg.Log.Warn("could not store usage before stopping; it is counted again from the last baseline", "server", e.id, "err", err)
+		}
+	}
 }
 
 func (m *Manager) entry(id uint) *entry {
@@ -168,6 +185,11 @@ func (m *Manager) baseCtx() context.Context {
 func (m *Manager) start(id uint) error {
 	m.startMu.Lock()
 	defer m.startMu.Unlock()
+	// the chart outlives a settings change that restarts the link
+	var carried []Sample
+	if old := m.entry(id); old != nil {
+		carried = m.Traffic(id)
+	}
 	m.stop(id)
 	// read only after the old node is gone, so its last usage write is in the baseline
 	srv, ok := m.cfg.Store.Get(id)
@@ -183,7 +205,8 @@ func (m *Manager) start(id uint) error {
 		conns[i] = link.ConnSpec{Name: "link-" + strconv.Itoa(i+1), Dial: m.cfg.Dial}
 	}
 	ctx, cancel := context.WithCancel(m.baseCtx())
-	e := &entry{id: id, cancel: cancel, done: make(chan struct{}), rec: srv.Record, up: map[string]bool{}}
+	e := &entry{id: id, cancel: cancel, done: make(chan struct{}), rec: srv.Record, up: map[string]bool{}, usage: newUsage()}
+	e.usage.samples = carried
 	e.node = hubnode.New(hubnode.Config{
 		Link: link.HubConfig{
 			AgentID: srv.Record.AgentID, Token: cr.Token, Reality: cr.Reality,
@@ -194,10 +217,16 @@ func (m *Manager) start(id uint) error {
 		Baseline:    srv.Baseline,
 		StatusEvery: m.cfg.StatusEvery,
 		StatsEvery:  m.cfg.StatsEvery,
-		OnUsage:     func(r hubnode.UsageReport) error { return m.onUsage(ctx, e, r) },
-		OnApplied:   func(s ctrl.State) { m.onApplied(e, s) },
-		OnEvent:     func(ev hubnode.Event) { m.onEvent(e, ev) },
-		OnStatus:    func(s hubnode.Snapshot) { m.onStatus(e, s) },
+		OnUsage: func(r hubnode.UsageReport) error {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			m.onUsage(e, r)
+			return nil
+		},
+		OnApplied: func(s ctrl.State) { m.onApplied(e, s) },
+		OnEvent:   func(ev hubnode.Event) { m.onEvent(e, ev) },
+		OnStatus:  func(s hubnode.Snapshot) { m.onStatus(e, s) },
 	})
 	e.node.SetCreds(cr) // the config has no room for a pending rotation's set
 
@@ -224,6 +253,10 @@ func (m *Manager) stop(id uint) {
 	if e != nil {
 		e.cancel()
 		<-e.done
+		// before a restart reads the baseline back
+		if err := m.flush(e); err != nil {
+			m.cfg.Log.Warn("could not store usage; it is counted again from the last baseline", "server", id, "err", err)
+		}
 	}
 }
 
@@ -236,6 +269,9 @@ func (m *Manager) Remove(id uint) {
 	m.mu.Lock()
 	delete(m.rings, id)
 	m.mu.Unlock()
+	if m.cfg.History != nil {
+		m.cfg.History.Forget(id, "")
+	}
 }
 
 func (m *Manager) IsRunning(id uint) bool { return m.entry(id) != nil }
@@ -338,17 +374,27 @@ func (m *Manager) PrefixesChanged() {
 
 // --- desired state ---
 
-// FakeTLS only, like the old plugin: user links are ee-links.
-var telemtSettings = map[string]any{
-	"modes":     telemt.Modes{TLS: true},
-	"log_level": "normal",
+// telemtSettings is FakeTLS only, like the old plugin: user links are ee-links. An
+// option left at its default adds no key, so the revision of an untouched server stays the same.
+func telemtSettings(o store.ProxyOptions) map[string]any {
+	set := map[string]any{"modes": telemt.Modes{TLS: true}, "log_level": "normal"}
+	if o.LogLevel != "" {
+		set["log_level"] = o.LogLevel
+	}
+	if len(o.ExtraCoverNames) > 0 {
+		set["tls_domains_extra"] = o.ExtraCoverNames
+	}
+	if o.DeviceWindowSecs > 0 {
+		set["unique_ip_window_secs"] = o.DeviceWindowSecs
+	}
+	return set
 }
 
 // Desired is the state a server's agent should run.
 func (m *Manager) Desired(srv store.Server) ctrl.State {
 	st := ctrl.State{
-		Port: 443, Disguise: srv.CoverDomain(), Telemt: telemtSettings,
-		MaxStreams: srv.Record.MaxStreams, Users: []ctrl.User{},
+		Port: 443, Disguise: srv.CoverDomain(), Telemt: telemtSettings(srv.ProxyOptions),
+		MaxStreams: srv.Record.MaxStreams, Users: []ctrl.User{}, Stopped: srv.ProxyStopped,
 	}
 	for _, u := range srv.Users {
 		st.Users = append(st.Users, ctrl.User{
@@ -374,53 +420,6 @@ func Rev(s ctrl.State) string {
 }
 
 // --- callbacks from the link ---
-
-var errNoChange = errors.New("nothing to write")
-
-func (m *Manager) onUsage(ctx context.Context, e *entry, r hubnode.UsageReport) error {
-	if ctx.Err() != nil {
-		return ctx.Err()
-	}
-	crossed := false
-	// usage and baseline go in one write, so a failure re-reports the delta
-	err := m.cfg.Store.Mutate(e.id, func(s *store.Server) error {
-		changed := false
-		for i := range s.Users {
-			u := &s.Users[i]
-			d, ok := r.Deltas[u.Name]
-			if !ok {
-				continue
-			}
-			was := u.OverQuota()
-			u.Up += d.Up
-			u.Down += d.Down
-			crossed = crossed || u.OverQuota() != was
-			changed = true
-		}
-		for name, c := range r.Cumulative {
-			// a user at zero still needs a row, or a restart forgets it was seen
-			if old, ok := s.Baseline[name]; !ok || old != c {
-				s.Baseline[name] = c
-				changed = true
-			}
-		}
-		if !changed {
-			return errNoChange // spare the router's flash
-		}
-		return nil
-	})
-	if errors.Is(err, errNoChange) {
-		return nil
-	}
-	if err != nil {
-		m.cfg.Log.Warn("could not store usage; it is counted again next poll", "server", e.id, "err", err)
-		return err
-	}
-	if crossed {
-		m.UsersChanged(e.id)
-	}
-	return nil
-}
 
 // onApplied follows a pushed state: a new cover site changes the link's SNI.
 func (m *Manager) onApplied(e *entry, s ctrl.State) {

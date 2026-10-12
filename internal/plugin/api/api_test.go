@@ -58,7 +58,7 @@ func newEnv(t *testing.T, lim store.Limits) *env {
 		t.Fatal(err)
 	}
 	rf := &tgnet.Refresher{List: tgnet.New([]netip.Prefix{netip.MustParsePrefix("203.0.113.0/24")})}
-	m := manager.New(manager.Config{Store: st, Allow: rf, Conns: 1, StatusEvery: 100 * time.Millisecond, StatsEvery: 100 * time.Millisecond})
+	m := manager.New(manager.Config{Store: st, Allow: rf, Conns: 1, StatusEvery: 100 * time.Millisecond, StatsEvery: 100 * time.Millisecond, FlushEvery: 100 * time.Millisecond})
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(func() { cancel(); m.Stop() })
 	m.Start(ctx)

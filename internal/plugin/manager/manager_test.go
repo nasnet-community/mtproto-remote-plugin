@@ -61,7 +61,7 @@ func newManager(t *testing.T, st Store, rf *tgnet.Refresher) *Manager {
 	d := &net.Dialer{Timeout: 5 * time.Second}
 	m := New(Config{
 		Store: st, Allow: rf, Dial: d.DialContext, DialDC: d.DialContext, Conns: 1,
-		StatusEvery: 100 * time.Millisecond, StatsEvery: 100 * time.Millisecond,
+		StatusEvery: 100 * time.Millisecond, StatsEvery: 100 * time.Millisecond, FlushEvery: 100 * time.Millisecond,
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(func() { cancel(); m.Stop() })

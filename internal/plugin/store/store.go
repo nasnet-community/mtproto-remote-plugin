@@ -46,6 +46,23 @@ type User struct {
 	Up         uint64    `json:"up"` // since the last reset
 	Down       uint64    `json:"down"`
 	CreatedAt  time.Time `json:"created_at"`
+	Note       string    `json:"note,omitempty"`
+	LastSeenAt time.Time `json:"last_seen_at,omitzero"` // last poll with traffic or a connection open
+	Today      Day       `json:"today,omitzero"`        // the current UTC day; older days live in the history file
+}
+
+// Day is one user's traffic on one UTC day.
+type Day struct {
+	Date string `json:"date"` // 2006-01-02
+	Up   uint64 `json:"up"`
+	Down uint64 `json:"down"`
+}
+
+// ProxyOptions are the advanced telemt settings the router owner may change.
+type ProxyOptions struct {
+	ExtraCoverNames  []string `json:"extra_cover_names,omitempty"`
+	DeviceWindowSecs int      `json:"device_window_secs,omitempty"` // 0: telemt's own default
+	LogLevel         string   `json:"log_level,omitempty"`          // "": normal
 }
 
 func (u User) OverQuota() bool { return u.QuotaBytes > 0 && u.Up+u.Down >= u.QuotaBytes }
@@ -62,6 +79,9 @@ type Server struct {
 	Record   relayops.Record
 	Users    []User
 	Baseline map[string]hubnode.Usage // the agent's last cumulative counters
+	// ProxyStopped keeps telemt off until the owner starts it again
+	ProxyStopped bool
+	ProxyOptions ProxyOptions
 }
 
 // CoverDomain is the cover site the server should use.
@@ -253,6 +273,7 @@ func allocated(ss []Server) int {
 
 func clone(s Server) Server {
 	s.Users = slices.Clone(s.Users)
+	s.ProxyOptions.ExtraCoverNames = slices.Clone(s.ProxyOptions.ExtraCoverNames)
 	base := make(map[string]hubnode.Usage, len(s.Baseline))
 	for k, v := range s.Baseline {
 		base[k] = v
@@ -269,14 +290,18 @@ func clone(s Server) Server {
 	return s
 }
 
-// save writes atomically: a crash leaves the old file or the new one, never half.
 func save(path string, f *fileForm) error {
 	b, err := json.MarshalIndent(f, "", "  ")
 	if err != nil {
 		return err
 	}
+	return writeFile(path, b)
+}
+
+// writeFile writes atomically: a crash leaves the old file or the new one, never half.
+func writeFile(path string, b []byte) error {
 	dir := filepath.Dir(path)
-	tmp, err := os.CreateTemp(dir, ".servers-*")
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+"-*")
 	if err != nil {
 		return err
 	}
@@ -348,6 +373,8 @@ type storedServer struct {
 	Record    storedRecord           `json:"record"`
 	Users     []User                 `json:"users"`
 	Baseline  map[string]storedUsage `json:"baseline,omitempty"`
+	Stopped   bool                   `json:"proxy_stopped,omitempty"`
+	Options   ProxyOptions           `json:"proxy_options,omitzero"`
 }
 
 type storedUsage struct {
@@ -379,6 +406,7 @@ func stored(s Server) storedServer {
 	r := s.Record
 	out := storedServer{
 		ID: s.ID, Name: s.Name, Host: s.Host, CreatedAt: s.CreatedAt, Cover: s.Cover, Users: s.Users,
+		Stopped: s.ProxyStopped, Options: s.ProxyOptions,
 		Record: storedRecord{
 			AgentID: r.AgentID, HubPort: r.HubPort, CapturePort: r.CapturePort, SSHPort: r.SSHPort, SSHUser: r.SSHUser,
 			HostKey: r.HostKey, RealityPub: r.RealityPub, ShortID: r.ShortID, Token: r.Token, NextSeed: r.NextSeed, KeysRotatedAt: r.KeysRotatedAt,
@@ -402,6 +430,7 @@ func (ss storedServer) server() Server {
 	r := ss.Record
 	out := Server{
 		ID: ss.ID, Name: ss.Name, Host: ss.Host, CreatedAt: ss.CreatedAt, Cover: ss.Cover, Users: ss.Users,
+		ProxyStopped: ss.Stopped, ProxyOptions: ss.Options,
 		Record: relayops.Record{
 			NodeID: ss.ID, AgentID: r.AgentID, HubPort: r.HubPort, CapturePort: r.CapturePort, SSHPort: r.SSHPort, SSHUser: r.SSHUser,
 			HostKey: r.HostKey, RealityPub: r.RealityPub, ShortID: r.ShortID, Token: r.Token, NextSeed: r.NextSeed, KeysRotatedAt: r.KeysRotatedAt,

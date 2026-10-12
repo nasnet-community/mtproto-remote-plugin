@@ -104,10 +104,15 @@ func run(log *slog.Logger) error {
 	allow.URL = func() string { return cidrURL }
 	allow.Client = func() *http.Client { return fetch }
 
+	hist, err := store.OpenHistory(dataDir)
+	if err != nil {
+		log.Warn("the usage history could not be read; a new one starts", "err", err)
+	}
 	mgr := manager.New(manager.Config{
 		Store: st, Allow: allow, Dial: dialer.DialContext, DialDC: dialer.DialContext,
-		StatsEvery: time.Minute, // each usage poll with traffic is a write to the router's flash
-		Log:        log,
+		// usage is read often but kept in memory: the router's flash sees one write every few minutes
+		StatsEvery: 15 * time.Second, FlushEvery: 5 * time.Minute, History: hist,
+		Log: log,
 	})
 	allow.Changed = mgr.PrefixesChanged
 	bins := relayops.NewBinaries(filepath.Join(dataDir, "bin"), func() *http.Client { return download })
