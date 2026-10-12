@@ -1,12 +1,12 @@
 # syntax=docker/dockerfile:1
 
-# The web page, built into one self-contained index.html, embedded gzipped.
+# The web page, built into one self-contained index.html, embedded brotli-compressed.
 FROM --platform=$BUILDPLATFORM node:22-alpine AS web
 WORKDIR /web
 COPY web/package.json web/package-lock.json ./
 RUN npm ci --no-audit --no-fund
 COPY web/ ./
-RUN npm run build && gzip -9 -c < dist/index.html > dist/index.html.gz
+RUN npm run build && node -e "const z=require('zlib'),f=require('fs');f.writeFileSync('dist/index.html.br',z.brotliCompressSync(f.readFileSync('dist/index.html'),{params:{[z.constants.BROTLI_PARAM_QUALITY]:11,[z.constants.BROTLI_PARAM_MODE]:z.constants.BROTLI_MODE_TEXT}}))"
 
 # Static binary, cross-compiled on the build platform so nothing runs under QEMU.
 FROM --platform=$BUILDPLATFORM golang:1.27.1-alpine AS build
@@ -18,7 +18,7 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-COPY --from=web /web/dist/index.html.gz internal/plugin/ui/index.html.gz
+COPY --from=web /web/dist/index.html.br internal/plugin/ui/index.html.br
 # HTTP/1.1 is enough: plain HTTP behind the panel's proxy, and the client only downloads files
 RUN set -eux; \
     if [ "$TARGETARCH" = "arm" ] && [ -n "$TARGETVARIANT" ]; then export GOARM=${TARGETVARIANT#v}; fi; \

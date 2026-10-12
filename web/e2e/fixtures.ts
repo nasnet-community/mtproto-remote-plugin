@@ -55,7 +55,13 @@ export const PAGE = { 'X-MTProto-UI': '1' }
 export const DOMESTIC_HINT =
   "This router reaches the server over its domestic route, so the server's address must be in the domestic address list."
 
-/** Whether any React hook state on the page still holds `text` (a secret kept too long). */
+/**
+ * Whether any component's hook state on the page still holds `text` (a secret
+ * kept too long). Walks Preact's tree from the root: the root element keeps its
+ * vnode in `__k`, vnodes keep children in `__k` and their component in `__c`,
+ * and a component keeps its hooks in `__H.__`, each with its value in `__`
+ * (and a pending value in `__N`). These names are fixed by Preact's mangle map.
+ */
 export function stateHolds(page: Page, text: string) {
   return page.evaluate((needle) => {
     const holds = (v: unknown, depth: number): boolean => {
@@ -63,24 +69,24 @@ export function stateHolds(page: Page, text: string) {
       if (!v || typeof v !== 'object' || depth > 4 || v instanceof Node) return false
       return Object.values(v).some((x) => holds(x, depth + 1))
     }
-    const root = document.getElementById('root')!
-    const key = Object.keys(root).find((k) => k.startsWith('__reactContainer$'))
+    const root = document.getElementById('root') as any
     // the whole tree, so a mounted component that renders nothing (a closed dialog) is seen too
-    const stack: any[] = key ? [(root as any)[key]] : []
+    const stack: any[] = root?.__k ? [root.__k] : []
+    if (!stack.length) throw new Error('no Preact tree on #root: did the internals change?')
     const seen = new Set<unknown>()
+    let hooks = 0
     while (stack.length) {
-      const f = stack.pop()
-      if (!f || seen.has(f)) continue
-      seen.add(f)
-      stack.push(f.child, f.sibling)
-      if (typeof f.type !== 'function') continue
-      // either copy of a fiber may be the current one
-      for (const g of [f, f.alternate]) {
-        for (let h = g?.memoizedState; h && typeof h === 'object' && 'next' in h; h = h.next) {
-          if (holds(h.memoizedState, 0)) return true
-        }
-      }
+      const v = stack.pop()
+      if (!v || typeof v !== 'object' || seen.has(v)) continue
+      seen.add(v)
+      if (Array.isArray(v.__k)) stack.push(...v.__k)
+      const list = v.__c?.__H?.__
+      if (!Array.isArray(list)) continue
+      hooks += list.length
+      for (const h of list) if (holds(h.__, 0) || holds(h.__N, 0)) return true
     }
+    // a walk that finds no hooks at all is looking in the wrong place
+    if (!hooks) throw new Error('no hook state found: did the internals change?')
     return false
   }, text)
 }

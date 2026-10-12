@@ -11,9 +11,12 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+
+	"github.com/andybalholm/brotli"
 )
 
-// The image build adds index.html.gz; the repo keeps only a text placeholder.
+// The image build adds index.html.br (brotli: the smallest, and the binary links the
+// decoder anyway); the repo keeps only a text placeholder. A .gz build still works.
 //
 //go:embed index.html*
 var files embed.FS
@@ -21,17 +24,25 @@ var files embed.FS
 // Page is the embedded page, unpacked.
 func Page() ([]byte, error) { return pick(files) }
 
-// pick prefers the gzipped build over the placeholder.
+// pick prefers a compressed build over the placeholder.
 func pick(fsys fs.FS) ([]byte, error) {
+	if br, err := fs.ReadFile(fsys, "index.html.br"); err == nil {
+		return unpack(io.NopCloser(brotli.NewReader(bytes.NewReader(br))), nil)
+	}
 	gz, err := fs.ReadFile(fsys, "index.html.gz")
 	if err != nil {
 		return fs.ReadFile(fsys, "index.html")
 	}
 	zr, err := gzip.NewReader(bytes.NewReader(gz))
+	return unpack(zr, err)
+}
+
+func unpack(r io.ReadCloser, err error) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("ui: the embedded page is corrupt: %w", err)
 	}
-	b, err := io.ReadAll(zr)
+	defer r.Close()
+	b, err := io.ReadAll(r)
 	if err != nil {
 		return nil, fmt.Errorf("ui: the embedded page is corrupt: %w", err)
 	}

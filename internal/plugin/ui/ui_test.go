@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+
+	"github.com/andybalholm/brotli"
 )
 
 func TestEmbeddedPageHasAHead(t *testing.T) {
@@ -166,5 +168,21 @@ func TestHandler(t *testing.T) {
 		if w := get(h, ae); w.Header().Get("Content-Encoding") != "" {
 			t.Errorf("Accept-Encoding %q got gzip", ae)
 		}
+	}
+}
+
+func TestPickPrefersTheBrotliBuild(t *testing.T) {
+	built := []byte("<!doctype html><html><head></head><body>brotli</body></html>")
+	var b bytes.Buffer
+	bw := brotli.NewWriterLevel(&b, brotli.BestCompression)
+	bw.Write(built)
+	bw.Close()
+	fs := fstest.MapFS{"index.html": {Data: []byte("placeholder")}, "index.html.gz": {Data: gzipped(t, []byte("older"))}, "index.html.br": {Data: b.Bytes()}}
+	got, err := pick(fs)
+	if err != nil || !bytes.Equal(got, built) {
+		t.Fatalf("pick = %q, %v", got, err)
+	}
+	if _, err := pick(fstest.MapFS{"index.html.br": {Data: []byte("not brotli")}}); err == nil {
+		t.Fatal("a corrupt brotli page was served")
 	}
 }

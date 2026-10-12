@@ -13,16 +13,14 @@
   },
   "dependencies": {
     "lucide-react": "^0.577.0",
-    "qrcode-generator": "^1.4.4",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "preact": "^11.0.1",
+    "qrcode-generator": "^1.4.4"
   },
   "devDependencies": {
     "@playwright/test": "^1.63.0",
     "@types/node": "^22.20.4",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
-    "@vitejs/plugin-react": "^5.0.0",
     "autoprefixer": "^10.4.20",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.14",
