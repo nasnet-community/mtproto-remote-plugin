@@ -89,8 +89,11 @@ func Inject(html []byte, base string) []byte {
 type handler struct{ plain, gz []byte }
 
 // New serves the embedded page for base.
-func New(base string) (http.Handler, error) {
-	page, err := Page()
+func New(base string) (http.Handler, error) { return NewFS(files, base) }
+
+// NewFS serves the page another package embeds (index.html, .br or .gz) for base.
+func NewFS(fsys fs.FS, base string) (http.Handler, error) {
+	page, err := pick(fsys)
 	if err != nil {
 		return nil, err
 	}
