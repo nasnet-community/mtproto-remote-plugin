@@ -158,7 +158,9 @@ export function expiry(iso: string | null, now = Date.now()) {
   const today = d.toISOString().slice(0, 10) === new Date(now).toISOString().slice(0, 10)
   const time = `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`
   const day = today ? `Today ${time}` : dayText(iso, now)
-  const rel = relativeTime(iso, now)
+  // whole days counted by date, so "20 Oct, in 7 days" agrees with the date at any hour
+  const days = Math.round((Date.parse(d.toISOString().slice(0, 10)) - Date.parse(new Date(now).toISOString().slice(0, 10))) / DAY)
+  const rel = Math.abs(t - now) < DAY || days === 0 ? relativeTime(iso, now) : t > now ? `in ${plural(days, 'day')}` : `${plural(-days, 'day')} ago`
   const past = t < now
   return {
     tone: (past ? 'past' : t - now <= 7 * DAY ? 'soon' : 'normal') as ExpiryTone,

@@ -228,6 +228,9 @@ describe('quotas and expiry', () => {
     expect(expiry('2026-11-01T23:59:59Z', NOW)).toMatchObject({ tone: 'normal', day: '1 Nov', rel: 'in 21 days', line: 'Expires 1 Nov, in 21 days' })
     expect(expiry('2026-10-11T23:59:59Z', NOW)).toMatchObject({ tone: 'soon', day: 'Today 23:59', line: 'Expires today at 23:59, in 12 hours' })
     expect(expiry('2026-10-05T23:59:59Z', NOW)).toMatchObject({ tone: 'past', day: '5 Oct', line: 'Expired 5 Oct, 6 days ago' })
+    // a preset ends on a day: in the morning, 7 days out is still "in 7 days", not 7.6 rounded up
+    const morning = Date.parse('2026-10-13T09:50:00Z')
+    expect(expiry(daysFromToday(7, morning), morning)).toMatchObject({ day: '20 Oct', rel: 'in 7 days' })
   })
 })
 
