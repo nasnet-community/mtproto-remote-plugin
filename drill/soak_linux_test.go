@@ -45,7 +45,7 @@ const (
 	soakHubPort  = 18443
 	soakCapPort  = 19443
 	soakSample   = 10 * time.Second
-	soakHWMLimit = 95 << 20 // bytes; the budget for the 5,000-stream default
+	soakHWMLimit = 256 << 20 // bytes; the 5,000-stream default stays under the agent's own limit
 )
 
 func TestSoakProcess(t *testing.T) {
@@ -250,7 +250,7 @@ func soakInner(t *testing.T) {
 		"-state", filepath.Join(adir, "state.json"), "-data", adir, "-telemt", filepath.Join(adir, "telemt"),
 		"-bin", filepath.Join(dir, "mtproto-agent"), "-trial", filepath.Join(adir, "trial.json"), "-unit", filepath.Join(adir, "unit"))
 	// the same environment as the unit in installer/install.go: the budget is for the agent as shipped
-	agent.Env = append(os.Environ(), "GOMEMLIMIT=80MiB", "GOTRACEBACK=none")
+	agent.Env = append(os.Environ(), "GOMEMLIMIT=256MiB", "GOTRACEBACK=none")
 	agent.Stdout, agent.Stderr = &agentOut, &agentOut
 	agent.SysProcAttr = &syscall.SysProcAttr{Pdeathsig: syscall.SIGKILL}
 	if err := agent.Start(); err != nil {

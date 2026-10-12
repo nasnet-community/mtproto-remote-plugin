@@ -19,6 +19,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"syscall"
@@ -97,6 +98,7 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
+	raiseMemLimit(layout.MemLimitMiB << 20)
 	up := update.Paths{AgentBin: p.bin, TelemtBin: p.telemt, TrialFile: p.trial}
 
 	// An update may have left this binary on trial. Before anything else, give up
@@ -186,6 +188,13 @@ func keepUserFile(p paths) string {
 }
 
 type runner func(ctx context.Context, name string, args ...string) error
+
+// raiseMemLimit lifts a lower GOMEMLIMIT, like an older unit's 80MiB; a higher one is kept.
+func raiseMemLimit(n int64) {
+	if debug.SetMemoryLimit(-1) < n {
+		debug.SetMemoryLimit(n)
+	}
+}
 
 func runCmd(ctx context.Context, name string, args ...string) error {
 	return exec.CommandContext(ctx, name, args...).Run()

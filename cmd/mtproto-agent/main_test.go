@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"slices"
 	"strings"
 	"testing"
@@ -23,6 +24,23 @@ func TestRunDefaultsAreTheInstalledLayout(t *testing.T) {
 	want := paths{layout.StatePath, layout.DataDir, layout.TelemtBin, layout.AgentBin, layout.TrialFile, layout.UnitPath}
 	if p != want || !p.installed() {
 		t.Fatalf("defaults = %+v", p)
+	}
+}
+
+// Boxes installed with an older unit still start the agent with GOMEMLIMIT=80MiB.
+func TestRaiseMemLimitLiftsALowerOneOnly(t *testing.T) {
+	was := debug.SetMemoryLimit(-1)
+	t.Cleanup(func() { debug.SetMemoryLimit(was) })
+
+	debug.SetMemoryLimit(80 << 20)
+	raiseMemLimit(layout.MemLimitMiB << 20)
+	if got := debug.SetMemoryLimit(-1); got != layout.MemLimitMiB<<20 {
+		t.Errorf("after 80MiB: limit = %d", got)
+	}
+	debug.SetMemoryLimit(1 << 30)
+	raiseMemLimit(layout.MemLimitMiB << 20)
+	if got := debug.SetMemoryLimit(-1); got != 1<<30 {
+		t.Errorf("a higher limit was lowered to %d", got)
 	}
 }
 

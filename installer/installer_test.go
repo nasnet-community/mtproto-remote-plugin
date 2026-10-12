@@ -145,7 +145,7 @@ func TestInstallAsRootEndToEnd(t *testing.T) {
 		t.Fatalf("state = %+v", f)
 	}
 	unit := h.read("etc/systemd/system/mtproto-agent.service")
-	for _, want := range []string{"ExecStart=/usr/local/bin/mtproto-agent run", "Restart=always", "StandardOutput=null", "GOMEMLIMIT=80MiB"} {
+	for _, want := range []string{"ExecStart=/usr/local/bin/mtproto-agent run", "Restart=always", "StandardOutput=null", "GOMEMLIMIT=256MiB"} {
 		if !strings.Contains(unit, want) {
 			t.Errorf("unit missing %q", want)
 		}

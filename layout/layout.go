@@ -17,4 +17,7 @@ const (
 	UnitPath   = "/etc/systemd/system/mtproto-agent.service"
 	UnitName   = "mtproto-agent"
 	TelemtUser = "telemt"
+	// MemLimitMiB is the agent's GOMEMLIMIT. The agent lifts a lower one itself, so
+	// an update reaches boxes whose unit still says 80MiB.
+	MemLimitMiB = 256
 )

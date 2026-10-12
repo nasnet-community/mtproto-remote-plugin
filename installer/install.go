@@ -542,7 +542,7 @@ func writeState(ctx context.Context, c *Conn, req Request, kept *state.File, uid
 	return cr, err
 }
 
-const unit = `[Unit]
+var unit = `[Unit]
 Description=MTProto agent
 After=network-online.target
 Wants=network-online.target
@@ -553,7 +553,7 @@ Restart=always
 RestartSec=2
 LimitNOFILE=65536
 LimitCORE=0
-Environment=GOMEMLIMIT=80MiB
+Environment=GOMEMLIMIT=` + strconv.Itoa(layout.MemLimitMiB) + `MiB
 Environment=GOTRACEBACK=none
 StandardOutput=null
 StandardError=null
