@@ -1253,3 +1253,33 @@ func TestAnUnfinishedMoveIsReopenedAtStart(t *testing.T) {
 		return err == nil
 	})
 }
+
+// Users with no traffic yet are reported at zero, so their first bytes count.
+func TestStatsReportConnectionsDevicesAndQuietUsers(t *testing.T) {
+	r := newRig(t)
+	r.proc.st.Running = true
+	r.d.cfg.Scrape = func(context.Context, int) (string, error) {
+		return "telemt_user_octets_from_client{user=\"u1\"} 10\n" +
+			"telemt_user_connections_current{user=\"u1\"} 2\n" +
+			"telemt_user_unique_ips_current{user=\"u1\"} 1\n" +
+			"telemt_user_unique_ips_current{user=\"quiet\"} 0\n", nil
+	}
+	st, err := r.d.Stats(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]ctrl.UserStat{}
+	for _, u := range st.Users {
+		got[u.Name] = u
+	}
+	if !st.Live || got["u1"].Connections != 2 || got["u1"].Devices != 1 || got["u1"].OctetsUp != 10 {
+		t.Fatalf("stats = %+v", st)
+	}
+	if q, ok := got["quiet"]; !ok || q.OctetsUp != 0 {
+		t.Fatalf("a user with no traffic is missing: %+v", st.Users)
+	}
+	r.proc.st.Running = false
+	if st, _ := r.d.Stats(context.Background()); !st.Live || len(st.Users) != 0 {
+		t.Fatalf("a stopped proxy has nobody on it: %+v", st)
+	}
+}

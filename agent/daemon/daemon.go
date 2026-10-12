@@ -1071,6 +1071,7 @@ func (d *Daemon) Status(ctx context.Context) ctrl.Status {
 func (d *Daemon) Stats(ctx context.Context) (ctrl.Stats, error) {
 	st := ctrl.Stats{At: d.cfg.Now()}
 	if !d.proc.Status().Running {
+		st.Live = true // nobody can be connected to a proxy that isn't running
 		return st, nil
 	}
 	d.mu.RLock()
@@ -1084,16 +1085,20 @@ func (d *Daemon) Stats(ctx context.Context) (ctrl.Stats, error) {
 		return st, &ctrl.Error{Code: "metrics", Msg: err.Error()}
 	}
 	up, down := telemt.ParseMetric(text, telemt.MetricUp), telemt.ParseMetric(text, telemt.MetricDown)
+	conns, devs := telemt.ParseMetric(text, telemt.MetricConnections), telemt.ParseMetric(text, telemt.MetricDevices)
+	// a user with no traffic yet is reported at zero, so its first bytes are counted rather than taken as a baseline
 	names := map[string]bool{}
-	for n := range up {
-		names[n] = true
-	}
-	for n := range down {
-		names[n] = true
+	for _, m := range []map[string]uint64{up, down, conns, devs} {
+		for n := range m {
+			names[n] = true
+		}
 	}
 	for n := range names {
-		st.Users = append(st.Users, ctrl.UserStat{Name: n, OctetsUp: up[n], OctetsDown: down[n]})
+		st.Users = append(st.Users, ctrl.UserStat{
+			Name: n, OctetsUp: up[n], OctetsDown: down[n], Connections: int(conns[n]), Devices: int(devs[n]),
+		})
 	}
+	st.Live = true
 	return st, nil
 }
 

@@ -33,6 +33,7 @@ type Agent struct {
 	CheckOK    bool
 	Checked    []string
 	Users      []ctrl.UserStat
+	Live       bool // stats carry per-user connections and devices, like a current agent
 	Running    bool
 	CrashLoop  bool
 	Held       string // why telemt is kept stopped
@@ -196,7 +197,7 @@ func (a *Agent) answers() map[string]ctrl.Handler {
 		ctrl.MStats: func(context.Context, json.RawMessage, io.Reader) (any, error) {
 			a.Mu.Lock()
 			defer a.Mu.Unlock()
-			return ctrl.Stats{At: time.Now(), Users: append([]ctrl.UserStat(nil), a.Users...)}, nil
+			return ctrl.Stats{At: time.Now(), Users: append([]ctrl.UserStat(nil), a.Users...), Live: a.Live}, nil
 		},
 		ctrl.MDisguiseCheck: func(_ context.Context, b json.RawMessage, _ io.Reader) (any, error) {
 			var c ctrl.DisguiseCheck

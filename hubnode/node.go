@@ -19,7 +19,13 @@ type Usage struct{ Up, Down uint64 }
 type UsageReport struct {
 	Deltas     map[string]Usage // traffic since the previous report, per user
 	Cumulative map[string]Usage // the agent's counters now: persist these as the next Baseline
+	// Live is what each user has open now, when the agent can say (HasLive); a user missing from it has nothing open
+	Live    map[string]Live
+	HasLive bool
 }
+
+// Live is one user's open connections and distinct client addresses.
+type Live struct{ Connections, Devices int }
 
 type Config struct {
 	Link link.HubConfig
@@ -403,7 +409,7 @@ func (n *Node) pollStats(ctx context.Context) {
 		return
 	}
 	rep, next := n.fold(st)
-	if len(rep.Deltas) == 0 && len(rep.Cumulative) == 0 {
+	if len(rep.Deltas) == 0 && len(rep.Cumulative) == 0 && !rep.HasLive {
 		return
 	}
 	if n.cfg.OnUsage != nil {
@@ -420,12 +426,15 @@ func (n *Node) pollStats(ctx context.Context) {
 func (n *Node) fold(st ctrl.Stats) (UsageReport, map[string]Usage) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	rep := UsageReport{Deltas: map[string]Usage{}, Cumulative: map[string]Usage{}}
+	rep := UsageReport{Deltas: map[string]Usage{}, Cumulative: map[string]Usage{}, Live: map[string]Live{}, HasLive: st.Live}
 	next := make(map[string]Usage, len(n.last)+len(st.Users))
 	for k, v := range n.last {
 		next[k] = v
 	}
 	for _, u := range st.Users {
+		if st.Live && (u.Connections > 0 || u.Devices > 0) {
+			rep.Live[u.Name] = Live{Connections: u.Connections, Devices: u.Devices}
+		}
 		cur := Usage{Up: u.OctetsUp, Down: u.OctetsDown}
 		rep.Cumulative[u.Name] = cur
 		var d Usage

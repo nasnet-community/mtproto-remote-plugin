@@ -101,8 +101,11 @@ func labelValue(labels, key string) (string, bool) {
 	return "", false
 }
 
-// Metric names telemt exposes for per-user traffic.
+// Metric names telemt exposes per user.
 const (
 	MetricUp   = "telemt_user_octets_from_client"
 	MetricDown = "telemt_user_octets_to_client"
+	// gauges; the unique-IP one exists for every configured user from startup
+	MetricConnections = "telemt_user_connections_current"
+	MetricDevices     = "telemt_user_unique_ips_current"
 )

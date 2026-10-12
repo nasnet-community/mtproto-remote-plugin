@@ -557,3 +557,21 @@ func TestTheSnapshotNamesTheDomainItsCoverCheckIsFor(t *testing.T) {
 	close(gate)
 	waitFor(t, func() bool { return n.Snapshot().DisguiseDomain == "other.example.com" }, "the new site's check")
 }
+
+// What users have open rides along with the counters; an agent too old to say leaves HasLive unset.
+func TestFoldCarriesWhatUsersHaveOpen(t *testing.T) {
+	n := &Node{last: map[string]Usage{}}
+	rep, _ := n.fold(ctrl.Stats{Live: true, Users: []ctrl.UserStat{
+		{Name: "on", Connections: 3, Devices: 2},
+		{Name: "idle"},
+	}})
+	if !rep.HasLive || rep.Live["on"] != (Live{Connections: 3, Devices: 2}) {
+		t.Fatalf("live = %+v", rep)
+	}
+	if _, ok := rep.Live["idle"]; ok {
+		t.Error("a user with nothing open is listed as live")
+	}
+	if old, _ := n.fold(ctrl.Stats{Users: []ctrl.UserStat{{Name: "on", Connections: 3}}}); old.HasLive || len(old.Live) != 0 {
+		t.Errorf("an old agent's stats look live: %+v", old)
+	}
+}

@@ -119,11 +119,16 @@ type UserStat struct {
 	Name       string `json:"name"`
 	OctetsUp   uint64 `json:"octets_up"`   // client -> telegram, cumulative since telemt started
 	OctetsDown uint64 `json:"octets_down"` // telegram -> client
+	// what the user has open right now; only meaningful when Stats.Live is set
+	Connections int `json:"connections,omitempty"`
+	Devices     int `json:"devices,omitempty"` // distinct client addresses
 }
 
 type Stats struct {
 	At    time.Time  `json:"at"`
 	Users []UserStat `json:"users"`
+	// Live: the agent reads per-user connections and devices; older agents leave it unset
+	Live bool `json:"live,omitempty"`
 }
 
 type LogsRequest struct {
