@@ -1,4 +1,4 @@
-package store
+package users
 
 import (
 	"encoding/json"
@@ -153,5 +153,5 @@ func (h *History) saveLocked() error {
 	if err != nil {
 		return err
 	}
-	return writeFile(h.path, b)
+	return WriteFile(h.path, b)
 }

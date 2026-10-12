@@ -9,23 +9,17 @@ import (
 	"time"
 
 	"github.com/nasnet-community/mtproto-remote-plugin/ctrl"
+	"github.com/nasnet-community/mtproto-remote-plugin/internal/plugin/users"
 	"github.com/nasnet-community/mtproto-remote-plugin/link"
 )
 
-// Usage is traffic in bytes.
-type Usage struct{ Up, Down uint64 }
-
-// UsageReport is what OnUsage receives after each stats poll.
-type UsageReport struct {
-	Deltas     map[string]Usage // traffic since the previous report, per user
-	Cumulative map[string]Usage // the agent's counters now: persist these as the next Baseline
-	// Live is what each user has open now, when the agent can say (HasLive); a user missing from it has nothing open
-	Live    map[string]Live
-	HasLive bool
-}
-
-// Live is one user's open connections and distinct client addresses.
-type Live struct{ Connections, Devices int }
+// The plugins' usage types: Usage is traffic in bytes, UsageReport what OnUsage
+// receives after each stats poll, Live one user's open connections and devices.
+type (
+	Usage       = users.Usage
+	UsageReport = users.Report
+	Live        = users.Live
+)
 
 type Config struct {
 	Link link.HubConfig
@@ -424,34 +418,13 @@ func (n *Node) pollStats(ctx context.Context) {
 
 // fold turns counters into deltas (either going backwards means telemt restarted) and returns the next baseline.
 func (n *Node) fold(st ctrl.Stats) (UsageReport, map[string]Usage) {
+	stats := make([]users.Stat, len(st.Users))
+	for i, u := range st.Users {
+		stats[i] = users.Stat{Name: u.Name, Up: u.OctetsUp, Down: u.OctetsDown, Connections: u.Connections, Devices: u.Devices}
+	}
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	rep := UsageReport{Deltas: map[string]Usage{}, Cumulative: map[string]Usage{}, Live: map[string]Live{}, HasLive: st.Live}
-	next := make(map[string]Usage, len(n.last)+len(st.Users))
-	for k, v := range n.last {
-		next[k] = v
-	}
-	for _, u := range st.Users {
-		if st.Live && (u.Connections > 0 || u.Devices > 0) {
-			rep.Live[u.Name] = Live{Connections: u.Connections, Devices: u.Devices}
-		}
-		cur := Usage{Up: u.OctetsUp, Down: u.OctetsDown}
-		rep.Cumulative[u.Name] = cur
-		var d Usage
-		// a user first seen without a stored baseline is recorded, not counted
-		if prev, seen := n.last[u.Name]; seen {
-			if cur.Up < prev.Up || cur.Down < prev.Down {
-				d = cur
-			} else {
-				d = Usage{Up: cur.Up - prev.Up, Down: cur.Down - prev.Down}
-			}
-		}
-		next[u.Name] = cur
-		if d.Up > 0 || d.Down > 0 {
-			rep.Deltas[u.Name] = d
-		}
-	}
-	return rep, next
+	return users.Fold(n.last, stats, st.Live)
 }
 
 // Snapshot returns the current view.

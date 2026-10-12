@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/nasnet-community/mtproto-remote-plugin/hubnode"
+	"github.com/nasnet-community/mtproto-remote-plugin/internal/plugin/users"
 	"github.com/nasnet-community/mtproto-remote-plugin/relayops"
 )
 
@@ -36,38 +36,25 @@ type Limits struct {
 	StreamBudget int
 }
 
-type User struct {
-	Name       string    `json:"name"`
-	Secret     string    `json:"secret"` // 32 lowercase hex
-	Enabled    bool      `json:"enabled"`
-	MaxIPs     int       `json:"max_ips,omitempty"`
-	ExpiresAt  time.Time `json:"expires_at,omitzero"`
-	QuotaBytes uint64    `json:"quota_bytes,omitempty"`
-	Up         uint64    `json:"up"` // since the last reset
-	Down       uint64    `json:"down"`
-	CreatedAt  time.Time `json:"created_at"`
-	Note       string    `json:"note,omitempty"`
-	LastSeenAt time.Time `json:"last_seen_at,omitzero"` // last poll with traffic or a connection open
-	Today      Day       `json:"today,omitzero"`        // the current UTC day; older days live in the history file
-}
+// The shared types, under the names the remote plugin has always used.
+type (
+	User         = users.User
+	Day          = users.Day
+	ProxyOptions = users.ProxyOptions
+	History      = users.History
+	Rolled       = users.Rolled
+)
 
-// Day is one user's traffic on one UTC day.
-type Day struct {
-	Date string `json:"date"` // 2006-01-02
-	Up   uint64 `json:"up"`
-	Down uint64 `json:"down"`
-}
+const (
+	HistoryFile = users.HistoryFile
+	HistoryDays = users.HistoryDays
+)
 
-// ProxyOptions are the advanced telemt settings the router owner may change.
-type ProxyOptions struct {
-	ExtraCoverNames  []string `json:"extra_cover_names,omitempty"`
-	DeviceWindowSecs int      `json:"device_window_secs,omitempty"` // 0: telemt's own default
-	LogLevel         string   `json:"log_level,omitempty"`          // "": normal
-}
-
-func (u User) OverQuota() bool { return u.QuotaBytes > 0 && u.Up+u.Down >= u.QuotaBytes }
-
-func (u User) Expired(now time.Time) bool { return !u.ExpiresAt.IsZero() && !now.Before(u.ExpiresAt) }
+var (
+	OpenHistory = users.OpenHistory
+	DayOf       = users.DayOf
+	FirstDay    = users.FirstDay
+)
 
 type Server struct {
 	ID        uint
@@ -78,7 +65,7 @@ type Server struct {
 	Cover    string
 	Record   relayops.Record
 	Users    []User
-	Baseline map[string]hubnode.Usage // the agent's last cumulative counters
+	Baseline map[string]users.Usage // the agent's last cumulative counters
 	// ProxyStopped keeps telemt off until the owner starts it again
 	ProxyStopped bool
 	ProxyOptions ProxyOptions
@@ -180,7 +167,7 @@ func (s *Store) Create(n NewServer) (uint, error) {
 		return 0, s.capErr()
 	}
 	id := s.nextID
-	srv := Server{ID: id, Name: n.Name, Host: n.Host, CreatedAt: time.Now().UTC(), Users: slices.Clone(n.Users), Baseline: map[string]hubnode.Usage{}}
+	srv := Server{ID: id, Name: n.Name, Host: n.Host, CreatedAt: time.Now().UTC(), Users: slices.Clone(n.Users), Baseline: map[string]users.Usage{}}
 	srv.Record.NodeID, srv.Record.MaxStreams = id, n.MaxStreams
 	next := append(slices.Clone(s.servers), srv)
 	if err := s.commit(next, id+1); err != nil {
@@ -274,7 +261,7 @@ func allocated(ss []Server) int {
 func clone(s Server) Server {
 	s.Users = slices.Clone(s.Users)
 	s.ProxyOptions.ExtraCoverNames = slices.Clone(s.ProxyOptions.ExtraCoverNames)
-	base := make(map[string]hubnode.Usage, len(s.Baseline))
+	base := make(map[string]users.Usage, len(s.Baseline))
 	for k, v := range s.Baseline {
 		base[k] = v
 	}
@@ -295,40 +282,7 @@ func save(path string, f *fileForm) error {
 	if err != nil {
 		return err
 	}
-	return writeFile(path, b)
-}
-
-// writeFile writes atomically: a crash leaves the old file or the new one, never half.
-func writeFile(path string, b []byte) error {
-	dir := filepath.Dir(path)
-	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+"-*")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(tmp.Name())
-	if err := tmp.Chmod(0o600); err != nil {
-		tmp.Close()
-		return err
-	}
-	if _, err := tmp.Write(b); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp.Name(), path); err != nil {
-		return err
-	}
-	if d, err := os.Open(dir); err == nil {
-		d.Sync()
-		d.Close()
-	}
-	return nil
+	return users.WriteFile(path, b)
 }
 
 // Records adapts the store to relayops.Store.
@@ -437,10 +391,10 @@ func (ss storedServer) server() Server {
 			Disguise: r.Disguise, MaxStreams: r.MaxStreams, Arch: r.Arch,
 			AgentVersion: r.AgentVersion, TelemtVersion: r.TelemtVersion, LastSeenAt: r.LastSeenAt,
 		},
-		Baseline: make(map[string]hubnode.Usage, len(ss.Baseline)),
+		Baseline: make(map[string]users.Usage, len(ss.Baseline)),
 	}
 	for k, v := range ss.Baseline {
-		out.Baseline[k] = hubnode.Usage{Up: v.Up, Down: v.Down}
+		out.Baseline[k] = users.Usage{Up: v.Up, Down: v.Down}
 	}
 	return out
 }

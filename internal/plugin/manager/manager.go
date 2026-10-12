@@ -21,6 +21,7 @@ import (
 	"github.com/nasnet-community/mtproto-remote-plugin/ctrl"
 	"github.com/nasnet-community/mtproto-remote-plugin/hubnode"
 	"github.com/nasnet-community/mtproto-remote-plugin/internal/plugin/store"
+	"github.com/nasnet-community/mtproto-remote-plugin/internal/plugin/users"
 	"github.com/nasnet-community/mtproto-remote-plugin/link"
 	"github.com/nasnet-community/mtproto-remote-plugin/relayops"
 	"github.com/nasnet-community/mtproto-remote-plugin/telemt"
@@ -100,8 +101,7 @@ type entry struct {
 
 	push sync.Mutex // one read-and-set of the users at a time, so an older read never lands last
 
-	usage   *usage
-	flushMu sync.Mutex // one usage write at a time
+	book *users.Book
 }
 
 func New(cfg Config) *Manager {
@@ -205,8 +205,7 @@ func (m *Manager) start(id uint) error {
 		conns[i] = link.ConnSpec{Name: "link-" + strconv.Itoa(i+1), Dial: m.cfg.Dial}
 	}
 	ctx, cancel := context.WithCancel(m.baseCtx())
-	e := &entry{id: id, cancel: cancel, done: make(chan struct{}), rec: srv.Record, up: map[string]bool{}, usage: newUsage()}
-	e.usage.samples = carried
+	e := &entry{id: id, cancel: cancel, done: make(chan struct{}), rec: srv.Record, up: map[string]bool{}, book: users.NewBook(carried)}
 	e.node = hubnode.New(hubnode.Config{
 		Link: link.HubConfig{
 			AgentID: srv.Record.AgentID, Token: cr.Token, Reality: cr.Reality,
@@ -374,26 +373,10 @@ func (m *Manager) PrefixesChanged() {
 
 // --- desired state ---
 
-// telemtSettings is FakeTLS only, like the old plugin: user links are ee-links. An
-// option left at its default adds no key, so the revision of an untouched server stays the same.
-func telemtSettings(o store.ProxyOptions) map[string]any {
-	set := map[string]any{"modes": telemt.Modes{TLS: true}, "log_level": "normal"}
-	if o.LogLevel != "" {
-		set["log_level"] = o.LogLevel
-	}
-	if len(o.ExtraCoverNames) > 0 {
-		set["tls_domains_extra"] = o.ExtraCoverNames
-	}
-	if o.DeviceWindowSecs > 0 {
-		set["unique_ip_window_secs"] = o.DeviceWindowSecs
-	}
-	return set
-}
-
 // Desired is the state a server's agent should run.
 func (m *Manager) Desired(srv store.Server) ctrl.State {
 	st := ctrl.State{
-		Port: 443, Disguise: srv.CoverDomain(), Telemt: telemtSettings(srv.ProxyOptions),
+		Port: 443, Disguise: srv.CoverDomain(), Telemt: users.TelemtSettings(srv.ProxyOptions),
 		MaxStreams: srv.Record.MaxStreams, Users: []ctrl.User{}, Stopped: srv.ProxyStopped,
 	}
 	for _, u := range srv.Users {
