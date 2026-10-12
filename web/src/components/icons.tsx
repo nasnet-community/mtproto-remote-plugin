@@ -2,8 +2,10 @@
 // icons from here, not from lucide-react, so the style stays consistent.
 import type { LucideIcon, LucideProps } from 'lucide-react'
 import {
-  Activity as LActivity,
+  ArrowDown as LArrowDown,
+  CalendarPlus as LCalendarPlus,
   Check as LCheck,
+  ChevronDown as LChevronDown,
   ChevronLeft as LChevronLeft,
   ChevronRight as LChevronRight,
   CircleCheck as LCircleCheck,
@@ -12,21 +14,24 @@ import {
   Copy as LCopy,
   Download as LDownload,
   Ellipsis as LEllipsis,
+  History as LHistory,
   Info as LInfo,
   KeyRound as LKeyRound,
+  ListChecks as LListChecks,
+  ListFilter as LListFilter,
   Loader2 as LLoader2,
   Moon as LMoon,
+  Pause as LPause,
   Pencil as LPencil,
+  Play as LPlay,
   Plus as LPlus,
-  Power as LPower,
-  PowerOff as LPowerOff,
   QrCode as LQrCode,
   RefreshCw as LRefreshCw,
   RotateCcw as LRotateCcw,
-  ScrollText as LScrollText,
   Search as LSearch,
   SearchX as LSearchX,
   SlidersHorizontal as LSlidersHorizontal,
+  Square as LSquare,
   Sun as LSun,
   Trash2 as LTrash2,
   TriangleAlert as LTriangleAlert,
@@ -41,8 +46,10 @@ const panel = (Icon: LucideIcon) => {
   return Styled
 }
 
-export const Activity = panel(LActivity)
+export const ArrowDown = panel(LArrowDown)
+export const CalendarPlus = panel(LCalendarPlus)
 export const Check = panel(LCheck)
+export const ChevronDown = panel(LChevronDown)
 export const ChevronLeft = panel(LChevronLeft)
 export const ChevronRight = panel(LChevronRight)
 export const CircleCheck = panel(LCircleCheck)
@@ -51,21 +58,24 @@ export const CircleX = panel(LCircleX)
 export const Copy = panel(LCopy)
 export const Download = panel(LDownload)
 export const Ellipsis = panel(LEllipsis)
+export const History = panel(LHistory)
 export const Info = panel(LInfo)
 export const KeyRound = panel(LKeyRound)
+export const ListChecks = panel(LListChecks)
+export const ListFilter = panel(LListFilter)
 export const Loader = panel(LLoader2)
 export const Moon = panel(LMoon)
+export const Pause = panel(LPause)
 export const Pencil = panel(LPencil)
+export const Play = panel(LPlay)
 export const Plus = panel(LPlus)
-export const Power = panel(LPower)
-export const PowerOff = panel(LPowerOff)
 export const QrCode = panel(LQrCode)
 export const RefreshCw = panel(LRefreshCw)
 export const RotateCcw = panel(LRotateCcw)
-export const ScrollText = panel(LScrollText)
 export const Search = panel(LSearch)
 export const SearchX = panel(LSearchX)
 export const SlidersHorizontal = panel(LSlidersHorizontal)
+export const Square = panel(LSquare)
 export const Sun = panel(LSun)
 export const Trash2 = panel(LTrash2)
 export const TriangleAlert = panel(LTriangleAlert)

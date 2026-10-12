@@ -1,9 +1,10 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Moon, Sun, TelegramMtprotoLogo } from './components/icons'
+import { JobTray } from './components/jobs'
 import { api } from './lib/api'
 import { usePoll } from './hooks/usePoll'
-import { navigate, useRoute } from './hooks/useRoute'
-import { Button } from './components/ui'
+import { navigate, onLeave, useRoute } from './hooks/useRoute'
+import { Button, Confirm } from './components/ui'
 import { ServersScreen } from './screens/ServersScreen'
 import { ServerScreen } from './screens/ServerScreen'
 
@@ -26,6 +27,18 @@ function ThemeToggle() {
   )
 }
 
+/** Asks before leaving a page with unsaved changes. */
+function LeaveQuestion() {
+  const [ask, setAsk] = useState<{ message: string; go: () => void } | null>(null)
+  useEffect(() => onLeave((message, go) => setAsk({ message, go })), [])
+  if (!ask) return null
+  return (
+    <Confirm title="Leave without saving?" action="Discard and leave" danger onConfirm={ask.go} onClose={() => setAsk(null)}>
+      <p>{ask.message}</p>
+    </Confirm>
+  )
+}
+
 export function App() {
   const route = useRoute()
   const config = usePoll(api.config, 30000)
@@ -42,16 +55,15 @@ export function App() {
               e.preventDefault()
               navigate({ page: 'servers' })
             }}
-            className="flex items-center gap-2.5 font-semibold"
+            className="flex shrink-0 items-center gap-2.5 font-semibold"
           >
             <TelegramMtprotoLogo size={30} />
             MTProto Remote
           </a>
-          <span className="hidden text-xs text-faint sm:inline">
-            Proxy servers that reach Telegram through this router
-          </span>
-          <div className="ml-auto flex items-center gap-1">
-            {config.data && <span className="mr-2 text-xs text-faint">v{config.data.version}</span>}
+          <span className="hidden truncate text-xs text-faint md:inline">Proxy servers that reach Telegram through this router</span>
+          <div className="ml-auto flex items-center gap-1 sm:gap-2">
+            <JobTray />
+            {config.data && <span className="hidden text-xs text-faint sm:inline">v{config.data.version}</span>}
             <ThemeToggle />
           </div>
         </div>
@@ -60,15 +72,10 @@ export function App() {
         {route.page === 'servers' ? (
           <ServersScreen config={config.data} onChanged={reloadConfig} />
         ) : (
-          <ServerScreen
-            key={route.id}
-            id={route.id}
-            tab={route.tab}
-            config={config.data}
-            onConfigChanged={reloadConfig}
-          />
+          <ServerScreen key={route.id} id={route.id} tab={route.tab} config={config.data} onConfigChanged={reloadConfig} />
         )}
       </main>
+      <LeaveQuestion />
     </div>
   )
 }

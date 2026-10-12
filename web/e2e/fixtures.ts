@@ -31,18 +31,14 @@ export const FRA = 1
 export const HEL = 2
 export const AMS = 3
 
-export async function openServer(
-  page: Page,
-  id: number,
-  tab: 'users' | 'status' | 'settings' | 'logs' = 'users',
-) {
+export async function openServer(page: Page, id: number, tab: 'users' | 'status' | 'settings' | 'logs' = 'users') {
   await page.goto(`/#/servers/${id}${tab === 'users' ? '' : `/${tab}`}`)
 }
 
 export const dialog = (page: Page, name: string | RegExp) => page.getByRole('dialog', { name })
+export const alertDialog = (page: Page, name: string | RegExp) => page.getByRole('alertdialog', { name })
 
-export const toast = (page: Page, text: string | RegExp) =>
-  page.getByRole('status').filter({ hasText: text })
+export const toast = (page: Page, text: string | RegExp) => page.locator('[data-toast]').filter({ hasText: text })
 
 export const hexOf = (s: string) => Buffer.from(s).toString('hex')
 
@@ -53,7 +49,7 @@ export const NEW_KEY = 'SHA256:u3Rq0Q1uV3Jc0mYw7b6o8xk3j2m9Pq5c1f0aZyXwVb8'
 export const PAGE = { 'X-MTProto-UI': '1' }
 
 export const DOMESTIC_HINT =
-  "This router reaches the server over its domestic route, so the server's address must be in the domestic address list."
+  'This router reaches the server over your domestic internet, so its address must be on the domestic list.'
 
 /**
  * Whether any component's hook state on the page still holds `text` (a secret

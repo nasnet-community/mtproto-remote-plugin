@@ -78,6 +78,8 @@ export interface InstallRequest extends Login {
   maxStreams?: number
   firstUser?: string
   allowUnverifiedCover?: boolean
+  hubPort?: number
+  capturePort?: number
 }
 
 export interface RepairRequest extends Login {
@@ -93,17 +95,22 @@ export type JobState = 'running' | 'ok' | 'failed'
 
 export interface JobStep {
   name: string
-  state: JobState
+  state: JobState | 'pending'
   detail?: string
 }
 
+export type JobKind = 'install' | 'repair' | 'uninstall' | 'update-agent' | 'update-telemt' | 'rotate' | 'link-port'
+
 export interface Job {
   id: string
-  kind: 'install' | 'repair' | 'uninstall' | 'update-agent' | 'update-telemt' | 'rotate'
+  kind: JobKind
   state: JobState
   steps: JobStep[]
   error?: string
+  /** 0 or missing when the job has no server (yet) */
   serverId?: number
+  /** the install's server name, else "" */
+  target?: string
   startedAt: string
   finishedAt?: string
 }
@@ -149,6 +156,31 @@ export interface ServerEvent {
   detail: string
 }
 
+export type LogLevel = 'silent' | 'normal' | 'verbose' | 'debug'
+
+export interface ProxyOptions {
+  extraCoverNames: string[]
+  /** 0: the proxy's default */
+  deviceWindowSecs: number
+  logLevel: LogLevel
+}
+
+export interface ServerUsage {
+  /** the agent reports connections and devices, and the numbers are fresh */
+  live: boolean
+  usersOnline: number
+  connections: number
+  devices: number
+  /** bytes/s client to Telegram, and back */
+  rateUp: number
+  rateDown: number
+  todayUp: number
+  todayDown: number
+  monthUp: number
+  monthDown: number
+  updatedAt: string | null
+}
+
 export interface Server {
   id: number
   name: string
@@ -177,6 +209,11 @@ export interface Server {
     healthy: boolean
   }
   events?: ServerEvent[]
+  /** stopped by the user; stays off across restarts */
+  proxyStopped: boolean
+  proxyOptions: ProxyOptions
+  updates: { agent: boolean; telemt: boolean; agentVersion: string; telemtVersion: string }
+  usage: ServerUsage
 }
 
 export interface CoverCheck {
@@ -190,6 +227,11 @@ export interface CoverCheck {
   error: string
 }
 
+export interface Links {
+  tg: string
+  https: string
+}
+
 export interface User {
   name: string
   enabled: boolean
@@ -201,7 +243,17 @@ export interface User {
   down: number
   createdAt: string
   secret: string
-  links: { tg: string; https: string }
+  note: string
+  /** null: the agent can't say, or the numbers are stale */
+  online: boolean | null
+  connections: number | null
+  devices: number | null
+  lastSeenAt: string | null
+  todayUp: number
+  todayDown: number
+  monthUp: number
+  monthDown: number
+  links: Links & { extra: (Links & { domain: string })[] }
 }
 
 export interface CreateUser {
@@ -210,9 +262,18 @@ export interface CreateUser {
   maxIps?: number
   expiresAt?: string | null
   quotaBytes?: number
+  note?: string
+  secret?: string
 }
 
-export type UpdateUser = Omit<CreateUser, 'name'>
+export type UpdateUser = Omit<CreateUser, 'name' | 'secret'>
+
+export type BulkAction = 'pause' | 'resume' | 'renew' | 'delete'
+
+export interface Traffic {
+  stepSec: number
+  samples: { at: string; up: number; down: number }[]
+}
 
 type Started = { jobId: string }
 
@@ -223,10 +284,11 @@ export const api = {
   probe: (req: ProbeRequest) => request<ProbeResult>('POST', 'probe', req),
   install: (req: InstallRequest) => request<Started>('POST', 'servers', req),
   job: (jobId: string) => request<Job>('GET', `jobs/${encodeURIComponent(jobId)}`),
+  jobs: () => request<Job[]>('GET', 'jobs'),
   servers: () => request<Server[]>('GET', 'servers'),
   server: (id: number) => request<Server>('GET', srv(id)),
   rename: (id: number, name: string) => request<Server>('PATCH', srv(id), { name }),
-  settings: (id: number, s: { coverDomain?: string; maxStreams?: number }) =>
+  settings: (id: number, s: { coverDomain?: string; maxStreams?: number; proxyOptions?: Partial<ProxyOptions> }) =>
     request<Server>('PATCH', `${srv(id)}/settings`, s),
   repair: (id: number, req: RepairRequest) => request<Started>('POST', `${srv(id)}/repair`, req),
   remove: (id: number, req: RemoveRequest = {}) =>
@@ -235,10 +297,13 @@ export const api = {
     request<Started>('POST', `${srv(id)}/update`, { kind }),
   rotate: (id: number) => request<Started>('POST', `${srv(id)}/rotate`),
   restart: (id: number) => request<{ ok: boolean }>('POST', `${srv(id)}/restart`),
+  stopProxy: (id: number, stopped: boolean) => request<Server>('POST', `${srv(id)}/proxy`, { stopped }),
+  linkPort: (id: number, port: number) => request<Started>('POST', `${srv(id)}/link-port`, { port }),
   checkCover: (id: number, domain: string) =>
     request<CoverCheck>('POST', `${srv(id)}/disguise-check`, { domain }),
   logs: (id: number, lines = 300) =>
     request<{ lines: string[] }>('GET', `${srv(id)}/logs?lines=${lines}`),
+  traffic: (id: number) => request<Traffic>('GET', `${srv(id)}/traffic`),
   refreshAllowlist: () => request<Allowlist>('POST', 'allowlist/refresh'),
 }
 
@@ -252,6 +317,8 @@ export const users = {
   rotateSecret: (id: number, name: string) =>
     request<User>('POST', `${user(id, name)}/rotate-secret`),
   resetUsage: (id: number, name: string) => request<User>('POST', `${user(id, name)}/reset-usage`),
+  bulk: (id: number, action: BulkAction, names: string[], days?: number) =>
+    request<{ changed: number }>('POST', `${srv(id)}/users/bulk`, { action, names, ...(days ? { days } : {}) }),
 }
 
 /**

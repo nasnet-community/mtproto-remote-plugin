@@ -20,6 +20,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/nasnet-community/mtproto-remote-plugin/ctrl"
 	"github.com/nasnet-community/mtproto-remote-plugin/hubnode"
@@ -29,6 +30,7 @@ import (
 	"github.com/nasnet-community/mtproto-remote-plugin/link"
 	"github.com/nasnet-community/mtproto-remote-plugin/mux"
 	"github.com/nasnet-community/mtproto-remote-plugin/relayops"
+	"github.com/nasnet-community/mtproto-remote-plugin/release"
 	"github.com/nasnet-community/mtproto-remote-plugin/telemt"
 	"github.com/nasnet-community/mtproto-remote-plugin/tgnet"
 )
@@ -76,6 +78,7 @@ func New(cfg Config) http.Handler {
 	route("GET /api/config", a.config)
 	route("POST /api/probe", a.probe)
 	route("POST /api/servers", a.install)
+	route("GET /api/jobs", a.jobs)
 	route("GET /api/jobs/{job}", a.job)
 	route("GET /api/jobs/{job}/stream", a.jobStream)
 	route("GET /api/servers", a.servers)
@@ -88,9 +91,13 @@ func New(cfg Config) http.Handler {
 	route("POST /api/servers/{id}/rotate", a.rotate)
 	route("POST /api/servers/{id}/restart", a.restart)
 	route("POST /api/servers/{id}/disguise-check", a.disguiseCheck)
+	route("POST /api/servers/{id}/proxy", a.proxy)
+	route("POST /api/servers/{id}/link-port", a.linkPort)
 	route("GET /api/servers/{id}/logs", a.logs)
+	route("GET /api/servers/{id}/traffic", a.traffic)
 	route("GET /api/servers/{id}/users", a.users)
 	route("POST /api/servers/{id}/users", a.createUser)
+	route("POST /api/servers/{id}/users/bulk", a.bulk)
 	route("PATCH /api/servers/{id}/users/{name}", a.updateUser)
 	route("DELETE /api/servers/{id}/users/{name}", a.deleteUser)
 	route("POST /api/servers/{id}/users/{name}/rotate-secret", a.rotateSecret)
@@ -184,8 +191,9 @@ var noise = map[string]bool{
 	"hubnode": true, "link": true, "mux": true, "ctrl": true, "store": true,
 }
 
-var wording = strings.NewReplacer("disguise", "cover site", "Disguise", "Cover site", "the node", "the server", "this node", "this server",
-	"node ", "server ", "Node ", "Server ")
+// the shared packages run in a panel too; here the router is the one that connects
+var wording = strings.NewReplacer("disguise", "cover site", "Disguise", "Cover site", "node's", "server's", "the node", "the server", "this node", "this server",
+	"node ", "server ", "Node ", "Server ", "the panel", "the router", "The panel", "The router")
 
 // human puts a shared package's error in the UI's words.
 func human(s string) string {
@@ -357,7 +365,8 @@ func (a *API) refreshAllowlist(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 	if err := a.cfg.Allow.RefreshNow(ctx); err != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]any{"error": "the list could not be refreshed: " + err.Error()})
+		// the list as it stands, so the page can show the failure where the list is
+		writeJSON(w, http.StatusBadGateway, map[string]any{"error": "the list could not be refreshed: " + err.Error(), "allowlist": a.allowlist()})
 		return
 	}
 	writeJSON(w, http.StatusOK, a.allowlist())
@@ -436,6 +445,8 @@ func (a *API) install(w http.ResponseWriter, r *http.Request) {
 		MaxStreams           int    `json:"maxStreams"`
 		FirstUser            string `json:"firstUser"`
 		AllowUnverifiedCover bool   `json:"allowUnverifiedCover"`
+		HubPort              int    `json:"hubPort"`
+		CapturePort          int    `json:"capturePort"`
 	}
 	if err := decode(w, r, &b); err != nil {
 		a.fail(w, err)
@@ -470,7 +481,7 @@ func (a *API) install(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := a.cfg.Svc.StartInstall(r.Context(), relayops.InstallParams{
 		Name: b.Name, Login: b.login(host), Disguise: cover, MaxStreams: b.MaxStreams,
-		AllowUnverifiedDisguise: b.AllowUnverifiedCover,
+		HubPort: b.HubPort, CapturePort: b.CapturePort, AllowUnverifiedDisguise: b.AllowUnverifiedCover,
 	})
 	if err != nil {
 		release()
@@ -497,6 +508,7 @@ type jobView struct {
 	State      string           `json:"state"`
 	Steps      []installer.Step `json:"steps"`
 	Error      string           `json:"error,omitempty"`
+	Target     string           `json:"target"`
 	ServerID   uint             `json:"serverId,omitempty"`
 	StartedAt  time.Time        `json:"startedAt"`
 	FinishedAt *time.Time       `json:"finishedAt,omitempty"`
@@ -505,7 +517,7 @@ type jobView struct {
 func jobOf(v relayops.JobView) jobView {
 	out := jobView{
 		ID: v.ID, Kind: v.Kind, State: string(v.State), Error: human(v.Error),
-		ServerID: v.NodeID, StartedAt: v.StartedAt.UTC(),
+		Target: v.Target, ServerID: v.NodeID, StartedAt: v.StartedAt.UTC(),
 	}
 	if v.FinishedAt != nil {
 		out.FinishedAt = utc(*v.FinishedAt)
@@ -516,6 +528,21 @@ func jobOf(v relayops.JobView) jobView {
 		out.Steps[i] = st
 	}
 	return out
+}
+
+// jobs is the job tray: what runs now and what ended in the last hour.
+func (a *API) jobs(w http.ResponseWriter, _ *http.Request) {
+	out := []jobView{}
+	for _, v := range a.cfg.Svc.Jobs(20) {
+		j := jobOf(v)
+		if j.Target == "" && j.ServerID != 0 {
+			if srv, ok := a.cfg.Store.Get(j.ServerID); ok {
+				j.Target = srv.Name
+			}
+		}
+		out = append(out, j)
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (a *API) job(w http.ResponseWriter, r *http.Request) {
@@ -657,6 +684,57 @@ type serverView struct {
 	Agent         *agentView   `json:"agent"`
 	Sync          syncView     `json:"sync"`
 	Events        *[]eventView `json:"events,omitempty"`
+	ProxyStopped  bool         `json:"proxyStopped"`
+	ProxyOptions  optionsView  `json:"proxyOptions"`
+	Updates       updatesView  `json:"updates"`
+	Usage         usageView    `json:"usage"`
+}
+
+type optionsView struct {
+	ExtraCoverNames  []string `json:"extraCoverNames"`
+	DeviceWindowSecs int      `json:"deviceWindowSecs"`
+	LogLevel         string   `json:"logLevel"`
+}
+
+func optionsOf(o store.ProxyOptions) optionsView {
+	v := optionsView{ExtraCoverNames: o.ExtraCoverNames, DeviceWindowSecs: o.DeviceWindowSecs, LogLevel: o.LogLevel}
+	if v.ExtraCoverNames == nil {
+		v.ExtraCoverNames = []string{}
+	}
+	if v.LogLevel == "" {
+		v.LogLevel = "normal"
+	}
+	return v
+}
+
+// updatesView is what an update would install; a dev agent build may share the running version.
+type updatesView struct {
+	Agent         bool   `json:"agent"`
+	Telemt        bool   `json:"telemt"`
+	AgentVersion  string `json:"agentVersion"`
+	TelemtVersion string `json:"telemtVersion"`
+}
+
+type usageView struct {
+	Live        bool       `json:"live"`
+	UsersOnline int        `json:"usersOnline"`
+	Connections int        `json:"connections"`
+	Devices     int        `json:"devices"`
+	RateUp      int64      `json:"rateUp"`
+	RateDown    int64      `json:"rateDown"`
+	TodayUp     uint64     `json:"todayUp"`
+	TodayDown   uint64     `json:"todayDown"`
+	MonthUp     uint64     `json:"monthUp"`
+	MonthDown   uint64     `json:"monthDown"`
+	UpdatedAt   *time.Time `json:"updatedAt"`
+}
+
+func usageOf(u manager.ServerUsage) usageView {
+	return usageView{
+		Live: u.Live, UsersOnline: u.UsersOnline, Connections: u.Connections, Devices: u.Devices,
+		RateUp: int64(u.RateUp), RateDown: int64(u.RateDown), TodayUp: u.TodayUp, TodayDown: u.TodayDown,
+		MonthUp: u.MonthUp, MonthDown: u.MonthDown, UpdatedAt: utc(u.UpdatedAt),
+	}
 }
 
 func linkOf(s hubnode.Snapshot) linkView {
@@ -721,6 +799,10 @@ func (a *API) view(srv store.Server, withEvents bool) serverView {
 		evs := eventsOf(a.cfg.Manager.Events(srv.ID))
 		v.Events = &evs
 	}
+	v.ProxyStopped, v.ProxyOptions = srv.ProxyStopped, optionsOf(srv.ProxyOptions)
+	due := a.cfg.Svc.Due(srv.ID, r.Arch)
+	v.Updates = updatesView{Agent: due.Agent, Telemt: due.Telemt, AgentVersion: release.AgentVersion, TelemtVersion: release.TelemtVersion}
+	v.Usage = usageOf(a.cfg.Manager.Usage(srv))
 	return v
 }
 
@@ -795,8 +877,9 @@ func (a *API) settings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var b struct {
-		CoverDomain *string `json:"coverDomain"`
-		MaxStreams  *int    `json:"maxStreams"`
+		CoverDomain  *string       `json:"coverDomain"`
+		MaxStreams   *int          `json:"maxStreams"`
+		ProxyOptions *optionsPatch `json:"proxyOptions"`
 	}
 	if err := decode(w, r, &b); err != nil {
 		a.fail(w, err)
@@ -814,8 +897,23 @@ func (a *API) settings(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, bad("max streams must be at least 100"))
 		return
 	}
+	mainCover := srv.CoverDomain()
+	if b.CoverDomain != nil {
+		mainCover = cover
+	}
+	opts := srv.ProxyOptions
+	if b.ProxyOptions != nil {
+		if opts, err = b.ProxyOptions.apply(srv.ProxyOptions, mainCover); err != nil {
+			a.fail(w, err)
+			return
+		}
+	} else if slices.Contains(opts.ExtraCoverNames, mainCover) {
+		a.fail(w, bad("%s is already one of the extra cover names: remove it there first", mainCover))
+		return
+	}
 	newCover := b.CoverDomain != nil && cover != srv.CoverDomain()
 	newStreams := b.MaxStreams != nil && *b.MaxStreams != srv.Record.MaxStreams
+	newOptions := b.ProxyOptions != nil
 	if newCover {
 		// the agent has to reach the site before it is told to use it
 		var res ctrl.DisguiseResult
@@ -836,6 +934,9 @@ func (a *API) settings(w http.ResponseWriter, r *http.Request) {
 		if b.MaxStreams != nil {
 			s.Record.MaxStreams = *b.MaxStreams
 		}
+		if newOptions {
+			s.ProxyOptions = opts
+		}
 		return nil
 	})
 	if err != nil {
@@ -849,10 +950,133 @@ func (a *API) settings(w http.ResponseWriter, r *http.Request) {
 			a.fail(w, err)
 			return
 		}
-	case newCover:
+	case newCover, newOptions:
 		a.cfg.Manager.UsersChanged(srv.ID)
 	}
 	a.fresh(w, srv.ID)
+}
+
+// optionsPatch is a partial ProxyOptions: what is left out stays.
+type optionsPatch struct {
+	ExtraCoverNames  *[]string `json:"extraCoverNames"`
+	DeviceWindowSecs *int      `json:"deviceWindowSecs"`
+	LogLevel         *string   `json:"logLevel"`
+}
+
+const maxExtraCovers = 4
+
+var logLevels = map[string]bool{"silent": true, "normal": true, "verbose": true, "debug": true}
+
+func (p optionsPatch) apply(o store.ProxyOptions, cover string) (store.ProxyOptions, error) {
+	if p.ExtraCoverNames != nil {
+		names := []string{}
+		for _, n := range *p.ExtraCoverNames {
+			n = strings.ToLower(strings.TrimSpace(n))
+			switch {
+			case !relayops.ValidDomain(n):
+				return o, bad("%q is not a domain name, like cdn.example.com", n)
+			case n == cover:
+				return o, bad("%s is the cover site already", n)
+			case slices.Contains(names, n):
+				return o, bad("%s is listed twice", n)
+			}
+			names = append(names, n)
+		}
+		if len(names) > maxExtraCovers {
+			return o, bad("a server takes at most %d extra cover names", maxExtraCovers)
+		}
+		o.ExtraCoverNames = names
+		if len(names) == 0 {
+			o.ExtraCoverNames = nil
+		}
+	} else if slices.Contains(o.ExtraCoverNames, cover) {
+		return o, bad("%s is already one of the extra cover names: remove it there first", cover)
+	}
+	if p.DeviceWindowSecs != nil {
+		if *p.DeviceWindowSecs < 0 || *p.DeviceWindowSecs > 86400 {
+			return o, bad("the device window is 0 to 86400 seconds")
+		}
+		o.DeviceWindowSecs = *p.DeviceWindowSecs
+	}
+	if p.LogLevel != nil {
+		lvl := strings.ToLower(strings.TrimSpace(*p.LogLevel))
+		if !logLevels[lvl] {
+			return o, bad("the log level is silent, normal, verbose or debug")
+		}
+		if lvl == "normal" {
+			lvl = "" // the default adds nothing to the agent's state
+		}
+		o.LogLevel = lvl
+	}
+	return o, nil
+}
+
+// proxy keeps the proxy off, or lets it run again.
+func (a *API) proxy(w http.ResponseWriter, r *http.Request) {
+	srv, err := a.lookup(r)
+	if err != nil {
+		a.fail(w, err)
+		return
+	}
+	var b struct {
+		Stopped *bool `json:"stopped"`
+	}
+	if err := decode(w, r, &b); err != nil {
+		a.fail(w, err)
+		return
+	}
+	if b.Stopped == nil {
+		a.fail(w, bad("say whether the proxy should be stopped"))
+		return
+	}
+	if err := a.cfg.Store.Mutate(srv.ID, func(s *store.Server) error { s.ProxyStopped = *b.Stopped; return nil }); err != nil {
+		a.fail(w, err)
+		return
+	}
+	a.cfg.Manager.UsersChanged(srv.ID)
+	a.fresh(w, srv.ID)
+}
+
+func (a *API) linkPort(w http.ResponseWriter, r *http.Request) {
+	srv, err := a.lookup(r)
+	if err != nil {
+		a.fail(w, err)
+		return
+	}
+	var b struct {
+		Port int `json:"port"`
+	}
+	if err := decode(w, r, &b); err != nil {
+		a.fail(w, err)
+		return
+	}
+	id, err := a.cfg.Svc.StartLinkPort(r.Context(), srv.ID, b.Port)
+	if err != nil {
+		a.fail(w, err)
+		return
+	}
+	accepted(w, id)
+}
+
+type sampleView struct {
+	At   time.Time `json:"at"`
+	Up   int64     `json:"up"`
+	Down int64     `json:"down"`
+}
+
+// traffic is the last minutes of the server's rate, kept in memory only.
+func (a *API) traffic(w http.ResponseWriter, r *http.Request) {
+	srv, err := a.lookup(r)
+	if err != nil {
+		a.fail(w, err)
+		return
+	}
+	out := []sampleView{}
+	for _, s := range a.cfg.Manager.Traffic(srv.ID) {
+		out = append(out, sampleView{At: s.At.UTC(), Up: int64(s.Up), Down: int64(s.Down)})
+	}
+	step := max(1, int(a.cfg.Manager.StatsStep().Round(time.Second).Seconds()))
+	writeJSON(w, http.StatusOK, map[string]any{"stepSec": step, "samples": out})
 }
 
 func accepted(w http.ResponseWriter, id string) {
@@ -1031,46 +1255,78 @@ func validName(s string) bool {
 }
 
 type linksView struct {
-	TG    string `json:"tg"`
-	HTTPS string `json:"https"`
+	TG    string          `json:"tg"`
+	HTTPS string          `json:"https"`
+	Extra []extraLinkView `json:"extra"`
+}
+
+type extraLinkView struct {
+	Domain string `json:"domain"`
+	TG     string `json:"tg"`
+	HTTPS  string `json:"https"`
 }
 
 type userView struct {
-	Name       string     `json:"name"`
-	Enabled    bool       `json:"enabled"`
-	State      string     `json:"state"`
-	MaxIPs     int        `json:"maxIps"`
-	ExpiresAt  *time.Time `json:"expiresAt"`
-	QuotaBytes uint64     `json:"quotaBytes"`
-	Up         uint64     `json:"up"`
-	Down       uint64     `json:"down"`
-	CreatedAt  time.Time  `json:"createdAt"`
-	Secret     string     `json:"secret"`
-	Links      linksView  `json:"links"`
+	Name        string     `json:"name"`
+	Enabled     bool       `json:"enabled"`
+	State       string     `json:"state"`
+	MaxIPs      int        `json:"maxIps"`
+	ExpiresAt   *time.Time `json:"expiresAt"`
+	QuotaBytes  uint64     `json:"quotaBytes"`
+	Up          uint64     `json:"up"`
+	Down        uint64     `json:"down"`
+	CreatedAt   time.Time  `json:"createdAt"`
+	Secret      string     `json:"secret"`
+	Links       linksView  `json:"links"`
+	Note        string     `json:"note"`
+	Online      *bool      `json:"online"` // nil: the agent can't say, or its last word is stale
+	Connections *int       `json:"connections"`
+	Devices     *int       `json:"devices"`
+	LastSeenAt  *time.Time `json:"lastSeenAt"`
+	TodayUp     uint64     `json:"todayUp"`
+	TodayDown   uint64     `json:"todayDown"`
+	MonthUp     uint64     `json:"monthUp"`
+	MonthDown   uint64     `json:"monthDown"`
 }
 
-// proxyLinks are built here so the page never assembles a secret.
-func proxyLinks(host, cover, secret string) linksView {
+// proxyLink is built here so the page never assembles a secret.
+func proxyLink(host, cover, secret string) (tg, https string) {
 	cs, err := telemt.ClientSecret(telemt.ModeTLS, secret, cover)
 	if err != nil {
 		cs = "ee" + secret + hex.EncodeToString([]byte(cover))
 	}
 	q := "server=" + url.QueryEscape(host) + "&port=443&secret=" + cs
-	return linksView{TG: "tg://proxy?" + q, HTTPS: "https://t.me/proxy?" + q}
+	return "tg://proxy?" + q, "https://t.me/proxy?" + q
 }
 
-func (a *API) userOf(srv store.Server, u store.User) userView {
+// linksOf is a user's link for the cover site, and one for each extra cover name.
+func linksOf(srv store.Server, secret string) linksView {
+	tg, https := proxyLink(srv.Host, srv.CoverDomain(), secret)
+	v := linksView{TG: tg, HTTPS: https, Extra: []extraLinkView{}}
+	for _, d := range srv.ProxyOptions.ExtraCoverNames {
+		t, h := proxyLink(srv.Host, d, secret)
+		v.Extra = append(v.Extra, extraLinkView{Domain: d, TG: t, HTTPS: h})
+	}
+	return v
+}
+
+func (a *API) userOf(srv store.Server, u store.User, uu manager.UserUsage) userView {
 	v := userView{
 		Name: u.Name, Enabled: u.Enabled, MaxIPs: u.MaxIPs, ExpiresAt: utc(u.ExpiresAt), QuotaBytes: u.QuotaBytes,
-		Up: u.Up, Down: u.Down, CreatedAt: u.CreatedAt.UTC(), Secret: u.Secret,
-		Links: proxyLinks(srv.Host, srv.CoverDomain(), u.Secret),
+		Up: uu.Up, Down: uu.Down, CreatedAt: u.CreatedAt.UTC(), Secret: u.Secret, Links: linksOf(srv, u.Secret),
+		Note: u.Note, LastSeenAt: utc(uu.LastSeen),
+		TodayUp: uu.TodayUp, TodayDown: uu.TodayDown, MonthUp: uu.MonthUp, MonthDown: uu.MonthDown,
+	}
+	if uu.Live {
+		on, conns, devs := uu.Connections > 0, uu.Connections, uu.Devices
+		v.Online, v.Connections, v.Devices = &on, &conns, &devs
 	}
 	switch {
 	case !u.Enabled:
 		v.State = "disabled"
 	case u.Expired(a.cfg.Now()):
 		v.State = "expired"
-	case u.OverQuota():
+	case u.QuotaBytes > 0 && uu.Up+uu.Down >= u.QuotaBytes:
 		v.State = "over-quota"
 	default:
 		v.State = "active"
@@ -1084,9 +1340,10 @@ func (a *API) users(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, err)
 		return
 	}
+	use := a.cfg.Manager.Usage(srv)
 	out := []userView{}
 	for _, u := range srv.Users {
-		out = append(out, a.userOf(srv, u))
+		out = append(out, a.userOf(srv, u, use.Users[u.Name]))
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -1115,7 +1372,18 @@ func (a *API) mutateUser(w http.ResponseWriter, r *http.Request, code int, fn fu
 	}
 	a.cfg.Manager.UsersChanged(srv.ID)
 	srv, _ = a.cfg.Store.Get(srv.ID)
-	writeJSON(w, code, a.userOf(srv, out))
+	writeJSON(w, code, a.userOf(srv, out, a.cfg.Manager.Usage(srv).Users[out.Name]))
+}
+
+const maxNote = 80
+
+// cleanNote keeps a note to one short line.
+func cleanNote(s string) (string, error) {
+	s = strings.Join(strings.Fields(s), " ")
+	if utf8.RuneCountInString(s) > maxNote {
+		return "", bad("a note is at most %d characters", maxNote)
+	}
+	return s, nil
 }
 
 func find(s *store.Server, name string) *store.User {
@@ -1134,6 +1402,8 @@ func (a *API) createUser(w http.ResponseWriter, r *http.Request) {
 		MaxIPs     int        `json:"maxIps"`
 		ExpiresAt  *time.Time `json:"expiresAt"`
 		QuotaBytes uint64     `json:"quotaBytes"`
+		Note       string     `json:"note"`
+		Secret     string     `json:"secret"` // keep someone's existing secret instead of making one
 	}
 	if err := decode(w, r, &b); err != nil {
 		a.fail(w, err)
@@ -1148,18 +1418,32 @@ func (a *API) createUser(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, bad("max IPs cannot be negative"))
 		return
 	}
-	sec, err := telemt.GenerateSecret()
+	note, err := cleanNote(b.Note)
 	if err != nil {
 		a.fail(w, err)
 		return
 	}
-	u := store.User{Name: b.Name, Secret: sec, Enabled: b.Enabled == nil || *b.Enabled, MaxIPs: b.MaxIPs, QuotaBytes: b.QuotaBytes, CreatedAt: a.cfg.Now().UTC()}
+	var sec string
+	if strings.TrimSpace(b.Secret) != "" {
+		if sec, err = telemt.NormalizeSecret(b.Secret); err != nil {
+			a.fail(w, bad("that secret is not usable: give 32 hex characters, or a dd or ee secret"))
+			return
+		}
+	} else if sec, err = telemt.GenerateSecret(); err != nil {
+		a.fail(w, err)
+		return
+	}
+	u := store.User{Name: b.Name, Secret: sec, Enabled: b.Enabled == nil || *b.Enabled, MaxIPs: b.MaxIPs, QuotaBytes: b.QuotaBytes, Note: note, CreatedAt: a.cfg.Now().UTC()}
 	if b.ExpiresAt != nil {
 		u.ExpiresAt = b.ExpiresAt.UTC()
 	}
 	a.mutateUser(w, r, http.StatusCreated, func(s *store.Server) (*store.User, error) {
 		if find(s, u.Name) != nil {
 			return nil, conflict("there is already a user called %s", u.Name)
+		}
+		// two users on one secret could not be told apart
+		if slices.ContainsFunc(s.Users, func(o store.User) bool { return o.Secret == u.Secret }) {
+			return nil, conflict("another user on this server already has that secret")
 		}
 		if len(s.Users) >= maxUsers {
 			return nil, conflict("a server holds at most %d users", maxUsers)
@@ -1175,10 +1459,19 @@ func (a *API) updateUser(w http.ResponseWriter, r *http.Request) {
 		MaxIPs     *int            `json:"maxIps"`
 		ExpiresAt  json.RawMessage `json:"expiresAt"` // null clears, absent keeps
 		QuotaBytes *uint64         `json:"quotaBytes"`
+		Note       *string         `json:"note"`
 	}
 	if err := decode(w, r, &b); err != nil {
 		a.fail(w, err)
 		return
+	}
+	var note string
+	if b.Note != nil {
+		var err error
+		if note, err = cleanNote(*b.Note); err != nil {
+			a.fail(w, err)
+			return
+		}
 	}
 	if b.MaxIPs != nil && *b.MaxIPs < 0 {
 		a.fail(w, bad("max IPs cannot be negative"))
@@ -1207,6 +1500,9 @@ func (a *API) updateUser(w http.ResponseWriter, r *http.Request) {
 		}
 		if b.QuotaBytes != nil {
 			u.QuotaBytes = *b.QuotaBytes
+		}
+		if b.Note != nil {
+			u.Note = note
 		}
 		switch {
 		case exp != nil:
@@ -1237,6 +1533,7 @@ func (a *API) deleteUser(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, err)
 		return
 	}
+	a.cfg.Manager.ForgetUser(srv.ID, name)
 	a.cfg.Manager.UsersChanged(srv.ID)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
@@ -1260,6 +1557,13 @@ func (a *API) rotateSecret(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) resetUsage(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
+	// what memory still holds belongs to before the reset
+	if id, err := serverID(r); err == nil {
+		if err := a.cfg.Manager.Flush(id); err != nil {
+			a.fail(w, err)
+			return
+		}
+	}
 	a.mutateUser(w, r, http.StatusOK, func(s *store.Server) (*store.User, error) {
 		u := find(s, name)
 		if u == nil {
@@ -1268,4 +1572,99 @@ func (a *API) resetUsage(w http.ResponseWriter, r *http.Request) {
 		u.Up, u.Down = 0, 0
 		return u, nil
 	})
+}
+
+// bulk acts on several users at once, with one push to the agent.
+func (a *API) bulk(w http.ResponseWriter, r *http.Request) {
+	srv, err := a.lookup(r)
+	if err != nil {
+		a.fail(w, err)
+		return
+	}
+	var b struct {
+		Action string   `json:"action"`
+		Names  []string `json:"names"`
+		Days   int      `json:"days"`
+	}
+	if err := decode(w, r, &b); err != nil {
+		a.fail(w, err)
+		return
+	}
+	if len(b.Names) == 0 || len(b.Names) > maxUsers {
+		a.fail(w, bad("pick the users to change"))
+		return
+	}
+	if b.Days == 0 {
+		b.Days = 30
+	}
+	if b.Days < 1 || b.Days > 3650 {
+		a.fail(w, bad("renew by 1 to 3650 days"))
+		return
+	}
+	picked := map[string]bool{}
+	for _, n := range b.Names {
+		picked[n] = true
+	}
+	now := a.cfg.Now()
+	changed := 0
+	edit := func(s *store.Server) error {
+		switch b.Action {
+		case "pause", "resume":
+			for i := range s.Users {
+				if u := &s.Users[i]; picked[u.Name] && u.Enabled != (b.Action == "resume") {
+					u.Enabled = b.Action == "resume"
+					changed++
+				}
+			}
+		case "renew":
+			for i := range s.Users {
+				// a user who never expires has nothing to renew
+				if u := &s.Users[i]; picked[u.Name] && !u.ExpiresAt.IsZero() {
+					u.ExpiresAt = renewed(u.ExpiresAt, now, b.Days)
+					changed++
+				}
+			}
+		case "delete":
+			before := len(s.Users)
+			s.Users = slices.DeleteFunc(s.Users, func(u store.User) bool { return picked[u.Name] })
+			for n := range picked {
+				delete(s.Baseline, n)
+			}
+			changed = before - len(s.Users)
+		default:
+			return bad("the action is pause, resume, renew or delete")
+		}
+		if changed == 0 {
+			return errUnchanged
+		}
+		return nil
+	}
+	err = a.cfg.Store.Mutate(srv.ID, edit)
+	if errors.Is(err, errUnchanged) {
+		writeJSON(w, http.StatusOK, map[string]any{"changed": 0})
+		return
+	}
+	if err != nil {
+		a.fail(w, err)
+		return
+	}
+	if b.Action == "delete" {
+		for n := range picked {
+			a.cfg.Manager.ForgetUser(srv.ID, n)
+		}
+	}
+	a.cfg.Manager.UsersChanged(srv.ID)
+	writeJSON(w, http.StatusOK, map[string]any{"changed": changed})
+}
+
+var errUnchanged = errors.New("nothing to change")
+
+// renewed moves an expiry on by days: from the old date while it is still ahead,
+// else from today, to the end of that UTC day.
+func renewed(exp, now time.Time, days int) time.Time {
+	if exp.After(now) {
+		return exp.AddDate(0, 0, days)
+	}
+	d := now.UTC().AddDate(0, 0, days)
+	return time.Date(d.Year(), d.Month(), d.Day(), 23, 59, 59, 0, time.UTC)
 }

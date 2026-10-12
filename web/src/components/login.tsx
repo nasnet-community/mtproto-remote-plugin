@@ -1,4 +1,4 @@
-import { useId, type ReactNode } from 'react'
+import { useId, type KeyboardEvent, type ReactNode } from 'react'
 import type { Login, ProbeResult } from '../lib/api'
 import { KeyRound, TriangleAlert } from './icons'
 import { Field, Input, Textarea, cx } from './ui'
@@ -50,68 +50,84 @@ export function toLogin(f: LoginForm, hostKey: string): Login {
   return login
 }
 
+const METHODS = [
+  ['password', 'Password'],
+  ['key', 'Private key'],
+] as const
+
 /** SSH port, user and a password or private key, laid out on a 6-column grid. */
 export function LoginFields({
   form,
   onChange,
   host,
+  afterHost,
 }: {
   form: LoginForm
   onChange: (f: LoginForm) => void
   /** A host field to put in front of the port, on the same row. */
   host?: ReactNode
+  /** A line under the host and port row. */
+  afterHost?: ReactNode
 }) {
   const methodId = useId()
-  const set = (k: keyof LoginForm) => (e: { target: { value: string } }) =>
-    onChange({ ...form, [k]: e.target.value })
+  const set = (k: keyof LoginForm) => (e: { target: { value: string } }) => onChange({ ...form, [k]: e.target.value })
+  // arrow keys move between the two choices, as in any radio group
+  const onKey = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) return
+    e.preventDefault()
+    const next = form.method === 'password' ? 1 : 0
+    onChange({ ...form, method: METHODS[next][0] })
+    e.currentTarget.querySelectorAll<HTMLElement>('[role="radio"]')[next]?.focus()
+  }
   return (
     <>
       {host}
       <Field label="SSH port" className="col-span-2">
-        {(id) => (
-          <Input id={id} required type="number" min={1} max={65535} value={form.sshPort} onChange={set('sshPort')} />
-        )}
+        {(p) => <Input {...p} required type="number" min={1} max={65535} value={form.sshPort} onChange={set('sshPort')} />}
       </Field>
+      {afterHost}
       <Field label="Username" className={host ? 'col-span-3' : 'col-span-4'}>
-        {(id) => (
-          <Input id={id} required value={form.sshUser} onChange={set('sshUser')} spellCheck={false} autoCapitalize="off" />
-        )}
+        {(p) => <Input {...p} required value={form.sshUser} onChange={set('sshUser')} spellCheck={false} autoCapitalize="off" />}
       </Field>
       <div className={cx('flex flex-col gap-1.5', host ? 'col-span-3' : 'col-span-6')}>
         <span id={methodId} className="text-[13px] font-medium text-muted">
           Log in with
         </span>
-        <div role="radiogroup" aria-labelledby={methodId} className="flex h-9 rounded-md border border-border-strong p-0.5">
-          {(['password', 'key'] as const).map((m) => (
+        <div
+          role="radiogroup"
+          aria-labelledby={methodId}
+          onKeyDown={onKey}
+          className="flex h-11 rounded-md border border-border-strong p-0.5 sm:h-9"
+        >
+          {METHODS.map(([m, text]) => (
             <button
               key={m}
               type="button"
               role="radio"
               aria-checked={form.method === m}
+              tabIndex={form.method === m ? 0 : -1}
               onClick={() => onChange({ ...form, method: m })}
               className={cx(
-                'flex-1 rounded-[6px] px-2 text-[13px] font-medium transition',
+                'flex-1 whitespace-nowrap rounded-[6px] px-1 text-[12.5px] font-medium transition sm:px-2 sm:text-[13px]',
                 'focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent',
                 form.method === m ? 'bg-card2 text-foreground shadow-sm' : 'text-muted hover:text-foreground',
               )}
             >
-              {m === 'password' ? 'Password' : 'Private key'}
+              {text}
             </button>
           ))}
         </div>
       </div>
       {form.method === 'password' ? (
         <Field label="Password" className="col-span-6">
-          {(id) => (
-            <Input id={id} required type="password" value={form.password} onChange={set('password')} autoComplete="new-password" />
-          )}
+          {(p) => <Input {...p} required type="password" value={form.password} onChange={set('password')} autoComplete="new-password" />}
         </Field>
       ) : (
         <>
           <Field label="Private key" hint="OpenSSH or PEM text." className="col-span-6">
-            {(id) => (
+            {(p) => (
               <Textarea
-                id={id}
+                {...p}
                 required
                 value={form.privateKey}
                 onChange={set('privateKey')}
@@ -122,9 +138,7 @@ export function LoginFields({
             )}
           </Field>
           <Field label="Key passphrase" hint="Only if the key has one." className="col-span-6">
-            {(id) => (
-              <Input id={id} type="password" value={form.passphrase} onChange={set('passphrase')} autoComplete="new-password" />
-            )}
+            {(p) => <Input {...p} type="password" value={form.passphrase} onChange={set('passphrase')} autoComplete="new-password" />}
           </Field>
         </>
       )}
@@ -132,13 +146,13 @@ export function LoginFields({
   )
 }
 
-/** Whether a probed host key needs a look first ('known' goes straight on). */
-export const keyNeedsTrust = (p: ProbeResult) => p.status !== 'known'
+/** A first key is trusted and pinned, like ssh does; only a key that changed stops to ask. */
+export const keyNeedsTrust = (p: ProbeResult) => p.status === 'changed'
 
-/** A changed key needs the box ticked; a first one only needs to be seen. */
+/** A changed key needs the box ticked. */
 export const keyTrusted = (p: ProbeResult, acked: boolean) => p.status !== 'changed' || acked
 
-/** The fingerprint to confirm: a first connection, or a key that changed. */
+/** The warning for a host key that differs from the pinned one. */
 export function HostKeyCheck({
   host,
   probe,
@@ -152,31 +166,21 @@ export function HostKeyCheck({
 }) {
   return (
     <div className="flex flex-col gap-3">
-      {probe.status === 'changed' ? (
-        <div className="flex gap-3 rounded-md border border-status-warn p-3 tint-warn">
-          <TriangleAlert className="h-5 w-5 shrink-0 text-status-warn" />
-          <p className="text-[13px]">
-            <b>{host}</b> shows a different key than last time. That happens after a
-            reinstall — or when someone is intercepting the connection.
-          </p>
-        </div>
-      ) : (
-        <p className="text-[13px] text-muted">
-          First connection to <b className="text-foreground">{host}</b>. Check the
-          fingerprint matches the server:{' '}
-          <code className="text-xs">ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub</code>
+      <div className="flex gap-3 rounded-md border border-warn bg-warn-tint p-3">
+        <TriangleAlert className="h-5 w-5 shrink-0 text-warn-text" />
+        <p className="text-[13px]">
+          <b>{host}</b> shows a different key than last time. That happens after a reinstall — or when someone
+          is intercepting the connection.
         </p>
-      )}
-      <div className="flex items-center gap-2 rounded-md bg-card2 p-3 font-mono text-xs break-all">
+      </div>
+      <div className="flex items-center gap-2 break-all rounded-md bg-card2 p-3 font-mono text-xs">
         <KeyRound className="h-4 w-4 shrink-0 text-muted" />
         {probe.fingerprint}
       </div>
-      {probe.status === 'changed' && (
-        <label className="flex items-center gap-2 text-[13px]">
-          <input type="checkbox" checked={acked} onChange={(e) => onAck(e.target.checked)} />
-          I know why the key changed
-        </label>
-      )}
+      <label className="flex min-h-[44px] items-center gap-2 text-[13px] sm:min-h-0">
+        <input type="checkbox" className="h-4 w-4" checked={acked} onChange={(e) => onAck(e.target.checked)} />
+        I know why the key changed
+      </label>
     </div>
   )
 }

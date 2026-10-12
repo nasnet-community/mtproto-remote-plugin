@@ -4,9 +4,9 @@ import { emptyLogin, keyNeedsTrust, keyTrusted, toLogin, withoutSecrets } from '
 const probe = (status: 'new' | 'known' | 'changed') => ({ fingerprint: 'SHA256:x', status })
 
 describe('host keys', () => {
-  it('asks only about a key that is new or changed', () => {
+  it('trusts a first key and asks only about one that changed', () => {
     expect(keyNeedsTrust(probe('known'))).toBe(false)
-    expect(keyNeedsTrust(probe('new'))).toBe(true)
+    expect(keyNeedsTrust(probe('new'))).toBe(false)
     expect(keyNeedsTrust(probe('changed'))).toBe(true)
   })
 

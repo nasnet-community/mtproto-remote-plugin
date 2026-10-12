@@ -1,15 +1,6 @@
-import { useRef, useState } from 'react'
-import {
-  ChevronLeft,
-  Download,
-  Ellipsis,
-  KeyRound,
-  Pencil,
-  RefreshCw,
-  Trash2,
-  Wrench,
-} from '../components/icons'
-import { JobSteps } from '../components/job'
+import { useEffect, useRef, useState } from 'react'
+import { ChevronLeft, Download, Ellipsis, KeyRound, Pencil, Play, RefreshCw, Square, Trash2, Wrench } from '../components/icons'
+import { useJobs } from '../components/jobs'
 import {
   HostKeyCheck,
   LoginFields,
@@ -22,65 +13,40 @@ import {
   type LoginForm,
 } from '../components/login'
 import { ApiError, api, type AppConfig, type Job, type ProbeResult, type Server } from '../lib/api'
-import { formatDuration, heldReason, linkTone, relativeTime } from '../lib/format'
-import { useBackgroundJob } from '../hooks/useJob'
+import { crashCause, dropLine, formatDuration, jobTitle, linkTone, openConnections, restartDone } from '../lib/format'
 import { usePoll } from '../hooks/usePoll'
 import { navigate, parseRoute, type Tab } from '../hooks/useRoute'
 import {
   Badge,
   Button,
   Card,
+  Confirm,
   Dialog,
   ErrorBox,
   Field,
+  Impact,
   Input,
   Menu,
   Notice,
   Spinner,
+  Tabs,
   cx,
   useToast,
+  type MenuItem,
 } from '../components/ui'
-import { proxyProblem } from './ServersScreen'
+import { Attention } from './Attention'
 import { UsersTab } from './UsersTab'
-import { SettingsTab } from './SettingsTab'
+import { CoverDialog, LinkPortDialog, SettingsTab } from './SettingsTab'
 import { StatusTab } from './StatusTab'
+import { LogsTab } from './LogsTab'
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e))
 
-type JobKind = Exclude<Job['kind'], 'install'>
-
-const JOB_COPY: Record<JobKind, { running: string; ok: string; failed: string }> = {
-  'update-agent': { running: 'Updating the agent', ok: 'Agent updated', failed: 'Update failed' },
-  'update-telemt': { running: 'Updating the proxy', ok: 'Proxy updated', failed: 'Update failed' },
-  rotate: { running: 'Rotating keys', ok: 'Keys rotated', failed: 'Rotation failed' },
-  repair: { running: 'Repairing', ok: 'Server repaired', failed: 'Repair failed' },
-  uninstall: { running: 'Removing', ok: 'Server removed', failed: 'Removal failed' },
-}
-
-function JobDialog({ job, kind, onClose }: { job: Job | null; kind: JobKind; onClose: () => void }) {
-  const copy = JOB_COPY[kind]
-  const title = job?.state === 'ok' ? copy.ok : job?.state === 'failed' ? copy.failed : copy.running
-  return (
-    <Dialog
-      open
-      onClose={onClose}
-      title={title}
-      footer={
-        job && job.state !== 'running' ? (
-          <Button variant="primary" onClick={onClose}>
-            Done
-          </Button>
-        ) : undefined
-      }
-    >
-      <JobSteps job={job} />
-    </Dialog>
-  )
-}
+export const NEEDS_LINK = 'Needs the link to this server'
 
 /**
- * Looks at the server's SSH host key before a login goes out: a known key goes
- * straight on, a new or changed one is shown first (a rebuilt VPS has a new one).
+ * Looks at the server's SSH host key before a login goes out: a known or first
+ * key goes straight on, a changed one is shown first (a rebuilt VPS has a new one).
  */
 function useHostKey(server: Server, login: LoginForm) {
   const [probe, setProbe] = useState<ProbeResult | null>(null)
@@ -102,15 +68,7 @@ function useHostKey(server: Server, login: LoginForm) {
   }
 }
 
-function RepairDialog({
-  server,
-  onClose,
-  onStarted,
-}: {
-  server: Server
-  onClose: () => void
-  onStarted: (jobId: string) => void
-}) {
+function RepairDialog({ server, onClose, onStarted }: { server: Server; onClose: () => void; onStarted: (jobId: string) => void }) {
   const [login, setLogin] = useState<LoginForm>(() => emptyLogin(server.sshPort, server.sshUser))
   const [reset, setReset] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -135,7 +93,6 @@ function RepairDialog({
   const probe = key.probe
   return (
     <Dialog
-      open
       onClose={onClose}
       title={`Repair ${server.name}`}
       description={probe ? undefined : 'Reinstalls the agent over SSH; settings and users stay.'}
@@ -143,12 +100,7 @@ function RepairDialog({
         probe ? (
           <>
             <Button onClick={key.back}>Back</Button>
-            <Button
-              variant={probe.status === 'changed' ? 'danger' : 'primary'}
-              disabled={!key.trusted}
-              busy={busy}
-              onClick={() => void repair(probe.fingerprint)}
-            >
+            <Button variant="danger" disabled={!key.trusted} busy={busy} onClick={() => void repair(probe.fingerprint)}>
               Trust and repair
             </Button>
           </>
@@ -179,7 +131,7 @@ function RepairDialog({
         >
           <LoginFields form={login} onChange={setLogin} />
           <label className="col-span-6 flex items-start gap-2 text-[13px]">
-            <input type="checkbox" className="mt-1" checked={reset} onChange={(e) => setReset(e.target.checked)} />
+            <input type="checkbox" className="mt-1 h-4 w-4" checked={reset} onChange={(e) => setReset(e.target.checked)} />
             <span>
               Start with new link keys
               <span className="block text-xs text-faint">Only if the agent's own state was lost.</span>
@@ -196,15 +148,7 @@ function RepairDialog({
   )
 }
 
-function RemoveDialog({
-  server,
-  onClose,
-  onStarted,
-}: {
-  server: Server
-  onClose: () => void
-  onStarted: (jobId: string) => void
-}) {
+function RemoveDialog({ server, onClose, onStarted }: { server: Server; onClose: () => void; onStarted: (jobId: string) => void }) {
   const [stage, setStage] = useState<'confirm' | 'login'>('confirm')
   const [login, setLogin] = useState<LoginForm>(() => emptyLogin(server.sshPort, server.sshUser))
   const [busy, setBusy] = useState<'remove' | 'force' | null>(null)
@@ -242,38 +186,30 @@ function RemoveDialog({
   const footer = probe ? (
     <>
       <Button onClick={key.back}>Back</Button>
-      <Button
-        variant="danger"
-        disabled={!key.trusted || !!busy}
-        busy={busy === 'remove'}
-        onClick={() => void start('remove', probe.fingerprint)}
-      >
+      <Button variant="danger" disabled={!key.trusted || !!busy} busy={busy === 'remove'} onClick={() => void start('remove', probe.fingerprint)}>
         Trust and remove
       </Button>
     </>
   ) : stage === 'confirm' ? (
-      <>
-        <Button onClick={onClose}>Cancel</Button>
-        <Button variant="danger" busy={busy === 'remove'} onClick={() => start('remove')}>
-          Remove server
-        </Button>
-      </>
-    ) : (
-      <>
-        <Button onClick={onClose}>Cancel</Button>
-        <Button variant="danger" type="submit" form="remove-login" busy={busy === 'remove'} disabled={!!busy}>
-          Log in and remove
-        </Button>
-      </>
-    )
+    <>
+      <Button onClick={onClose}>Cancel</Button>
+      <Button variant="danger" busy={busy === 'remove'} onClick={() => start('remove')}>
+        Remove server
+      </Button>
+    </>
+  ) : (
+    <>
+      <Button onClick={onClose}>Cancel</Button>
+      <Button variant="danger" type="submit" form="remove-login" busy={busy === 'remove'} disabled={!!busy}>
+        Log in and remove
+      </Button>
+    </>
+  )
 
   return (
-    <Dialog open onClose={onClose} title={`Remove ${server.name}?`} footer={footer}>
+    <Dialog onClose={onClose} title={`Remove ${server.name}?`} footer={footer}>
       {stage === 'confirm' && (
-        <p className="text-[13px] text-muted">
-          The agent and the proxy are removed from the server, and every user's link stops
-          working.
-        </p>
+        <p className="text-[13px] text-muted">The agent and the proxy are removed from the server, and every user's link stops working.</p>
       )}
       {probe && <HostKeyCheck host={server.host} probe={probe} acked={key.acked} onAck={key.setAcked} />}
       {stage === 'login' && !probe && (
@@ -287,9 +223,7 @@ function RemoveDialog({
           }}
         >
           <div className="col-span-6">
-            <Notice tone="warn">
-              The router cannot reach this server's agent, so log in over SSH to remove it.
-            </Notice>
+            <Notice tone="warn">The router can't reach this server's agent, so log in over SSH to remove it.</Notice>
           </div>
           <LoginFields form={login} onChange={setLogin} />
           <div className="col-span-6 flex flex-wrap items-center justify-between gap-2 border-t border-border pt-3 text-[13px] text-muted">
@@ -309,15 +243,7 @@ function RemoveDialog({
   )
 }
 
-function RenameDialog({
-  server,
-  onClose,
-  onRenamed,
-}: {
-  server: Server
-  onClose: () => void
-  onRenamed: () => void
-}) {
+function RenameDialog({ server, onClose, onRenamed }: { server: Server; onClose: () => void; onRenamed: () => void }) {
   const toast = useToast()
   const [name, setName] = useState(server.name)
   const [busy, setBusy] = useState(false)
@@ -336,7 +262,6 @@ function RenameDialog({
   }
   return (
     <Dialog
-      open
       onClose={onClose}
       title="Rename server"
       footer={
@@ -349,9 +274,9 @@ function RenameDialog({
       }
     >
       <Field label="Name" error={error}>
-        {(id) => (
+        {(p) => (
           <Input
-            id={id}
+            {...p}
             value={name}
             maxLength={100}
             onChange={(e) => setName(e.target.value)}
@@ -363,61 +288,17 @@ function RenameDialog({
   )
 }
 
-function RotateDialog({ onClose, onConfirm }: { onClose: () => void; onConfirm: () => Promise<void> }) {
-  const [busy, setBusy] = useState(false)
-  return (
-    <Dialog
-      open
-      onClose={onClose}
-      title="Rotate the link keys?"
-      footer={
-        <>
-          <Button onClick={onClose}>Cancel</Button>
-          <Button
-            variant="primary"
-            busy={busy}
-            onClick={async () => {
-              setBusy(true)
-              await onConfirm()
-              setBusy(false)
-            }}
-          >
-            Rotate keys
-          </Button>
-        </>
-      }
-    >
-      <p className="text-[13px] text-muted">
-        The agent and the router switch to new link keys. Users and their links stay the same.
-      </p>
-    </Dialog>
-  )
-}
+type Modal = { kind: 'rename' | 'remove' | 'repair' | 'rotate' | 'restart' | 'stop' | 'cover' | 'port' } | { kind: 'update'; what: 'agent' | 'telemt' }
 
-function LogsTab({ server }: { server: Server }) {
-  const { data, error, loading, reload } = usePoll(() => api.logs(server.id, 300), 10000, [server.id])
-  return (
-    <Card className="flex flex-col gap-3 p-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-[13px] text-muted">The agent's last 300 lines, kept in its memory.</p>
-        <Button size="sm" onClick={() => void reload()} busy={loading}>
-          <RefreshCw className="h-3.5 w-3.5" /> Refresh
-        </Button>
-      </div>
-      {error && <ErrorBox>{error}</ErrorBox>}
-      {!data && !error && <Spinner />}
-      {data && (
-        <pre className="max-h-[65vh] overflow-auto whitespace-pre-wrap break-words rounded-md bg-card2 p-3 font-mono text-[11.5px] leading-relaxed">
-          {data.lines.join('\n').trim() || 'No log lines yet.'}
-        </pre>
-      )}
-    </Card>
-  )
-}
+const TABS: [Tab, string][] = [
+  ['users', 'Users'],
+  ['status', 'Status'],
+  ['settings', 'Settings'],
+  ['logs', 'Logs'],
+]
 
-type Modal = { kind: 'rename' | 'remove' | 'repair' | 'rotate' | 'job' }
-
-const TABS: Tab[] = ['users', 'status', 'settings', 'logs']
+/** "Update to 0.5.0", or "Update available" when a dev build has the same number. */
+const updateText = (next: string, now: string) => (next && next !== now ? `Update to ${next}` : 'Update available')
 
 export function ServerScreen({
   id,
@@ -431,7 +312,9 @@ export function ServerScreen({
   onConfigChanged: () => void
 }) {
   const toast = useToast()
+  const jobs = useJobs()
   const sid = Number(id)
+  const [restart, setRestart] = useState<{ at: number; before?: string } | null>(null)
   // a 404 is an answer here, not an error
   const detail = usePoll(
     () =>
@@ -441,19 +324,42 @@ export function ServerScreen({
             throw e
           })
         : Promise.resolve('gone' as const),
-    5000,
+    restart ? 2000 : 5000,
     [sid],
   )
   const [modal, setModal] = useState<Modal | null>(null)
-  const [acting, setActing] = useState<string | null>(null)
+  const [starting, setStarting] = useState(false)
   // a removal's last event can land after the server is gone
   const last = useRef<Server | null>(null)
   if (detail.data && detail.data !== 'gone') last.current = detail.data
+  const server = detail.data === 'gone' ? last.current : detail.data
+  const crash = !!server?.agent?.telemt.crashLoop && server.link.state !== 'down'
+  const crashLogs = usePoll(() => (crash ? api.logs(sid, 100) : Promise.resolve(null)), 30000, [sid, crash])
+  const cause = crashLogs.data ? crashCause(crashLogs.data.lines) : null
+  const [removing, setRemoving] = useState(false)
+
+  // "Restarting…" lasts until a fresh report shows the proxy back, or a minute
+  useEffect(() => {
+    if (restart && server && restartDone(server, restart.before, Date.now() - restart.at)) {
+      setRestart(null)
+      toast('Proxy restarted')
+    }
+  }, [server, restart, toast])
+  useEffect(() => {
+    if (!restart) return
+    const t = setTimeout(() => {
+      setRestart(null)
+      toast("The proxy isn't back after a minute. The log may say why.", 'error', {
+        label: 'View logs',
+        run: () => navigate({ page: 'server', id: sid, tab: 'logs' }),
+      })
+    }, 60000)
+    return () => clearTimeout(t)
+  }, [restart, toast, sid])
 
   // may run after this page is left, so it leans only on `last`
   const jobDone = (j: Job) => {
     const name = last.current?.name ?? 'The server'
-    const copy = JOB_COPY[j.kind as JobKind]
     if (j.kind === 'uninstall' && j.state === 'ok') {
       toast(`${name} removed`)
       onConfigChanged()
@@ -461,13 +367,20 @@ export function ServerScreen({
       if (here.page === 'server' && here.id === id) navigate({ page: 'servers' })
       return
     }
-    if (j.state === 'ok') toast(j.kind === 'repair' ? `${name} repaired` : copy.ok)
-    else toast(copy.failed, 'error')
+    if (j.kind === 'uninstall') setRemoving(false)
+    if (j.state === 'ok') toast(j.kind === 'repair' ? `${name} repaired` : jobTitle(j))
+    else toast(jobTitle(j), 'error')
     void detail.reload()
   }
-  const bg = useBackgroundJob<JobKind>(jobDone)
 
-  if (detail.data === 'gone' && !bg.running) {
+  const startJob = async (fn: () => Promise<{ jobId: string }>) => {
+    const { jobId } = await fn()
+    jobs.watch(jobId, jobDone)
+    jobs.open(jobId)
+    setModal(null)
+  }
+
+  if (detail.data === 'gone' && !removing) {
     return (
       <div className="flex flex-col items-start gap-3">
         <ErrorBox>That server is not in the list any more.</ErrorBox>
@@ -477,52 +390,92 @@ export function ServerScreen({
       </div>
     )
   }
-  const server = detail.data === 'gone' ? last.current : detail.data
   if (!server) return detail.error ? <ErrorBox>{detail.error}</ErrorBox> : <Spinner />
 
   const reload = () => void detail.reload()
   const down = server.link.state === 'down'
   const agent = server.agent
-  const problem = proxyProblem(server)
+  const close = () => setModal(null)
+  const open = (t: Tab) => navigate({ page: 'server', id: server.id, tab: t })
 
-  const restart = async () => {
-    setActing('restart')
+  const startProxy = async () => {
+    setStarting(true)
     try {
-      await api.restart(server.id)
-      toast('Proxy restarted')
+      await api.stopProxy(server.id, false)
+      toast('Proxy started')
       await detail.reload()
     } catch (e) {
       toast(message(e), 'error')
     } finally {
-      setActing(null)
+      setStarting(false)
     }
   }
 
-  const watch = (jobId: string, kind: JobKind) => {
-    bg.follow(jobId, kind)
-    setModal({ kind: 'job' })
+  const { updates } = server
+  const menu: MenuItem[] = [
+    ...(updates.agent
+      ? [
+          {
+            label: `Update agent${updates.agentVersion && updates.agentVersion !== server.agentVersion ? ` to ${updates.agentVersion}` : ''}`,
+            icon: <Download />,
+            disabled: down,
+            hint: down ? NEEDS_LINK : undefined,
+            onSelect: () => setModal({ kind: 'update', what: 'agent' }),
+          },
+        ]
+      : []),
+    ...(updates.telemt
+      ? [
+          {
+            label: `Update proxy${updates.telemtVersion && updates.telemtVersion !== server.telemtVersion ? ` to ${updates.telemtVersion}` : ''}`,
+            icon: <Download />,
+            disabled: down,
+            hint: down ? NEEDS_LINK : undefined,
+            onSelect: () => setModal({ kind: 'update', what: 'telemt' }),
+          },
+        ]
+      : []),
+    ...(server.registered
+      ? [
+          {
+            label: 'Renew link keys',
+            icon: <KeyRound />,
+            disabled: down,
+            hint: down ? `Users keep their links. ${NEEDS_LINK}` : 'Users keep their links',
+            onSelect: () => setModal({ kind: 'rotate' }),
+          },
+        ]
+      : []),
+    { label: 'Rename', icon: <Pencil />, onSelect: () => setModal({ kind: 'rename' }) },
+    { label: 'Remove server…', icon: <Trash2 />, danger: true, divide: true, onSelect: () => setModal({ kind: 'remove' }) },
+  ]
+
+  const chip = (what: 'agent' | 'telemt') => {
+    const text = updateText(what === 'agent' ? updates.agentVersion : updates.telemtVersion, what === 'agent' ? server.agentVersion : server.telemtVersion)
+    return (
+      <button
+        type="button"
+        disabled={down}
+        title={down ? NEEDS_LINK : undefined}
+        onClick={() => setModal({ kind: 'update', what })}
+        // small to look at, but a 44 px target for a thumb
+        className="relative inline-flex h-6 items-center gap-1 whitespace-nowrap rounded-full border border-border-strong px-2 text-[11.5px] font-medium text-foreground before:absolute before:-inset-x-1 before:-inset-y-2.5 before:content-[''] hover:bg-card2 disabled:cursor-not-allowed disabled:opacity-60 sm:h-5 sm:before:hidden"
+      >
+        <Download className="h-3 w-3" />
+        {text}
+      </button>
+    )
   }
 
-  const startJob = async (kind: JobKind, fn: () => Promise<{ jobId: string }>) => {
-    try {
-      watch((await fn()).jobId, kind)
-    } catch (e) {
-      toast(message(e), 'error')
-      setModal(null)
-    }
-  }
-
-  const closeJob = () => {
-    if (bg.running && bg.followed) toast(`${JOB_COPY[bg.followed.kind].running} in the background`)
-    setModal(null)
-  }
+  const n = openConnections(server)
+  const updateWhat = modal?.kind === 'update' ? modal.what : null
 
   return (
     <div className="flex flex-col gap-5">
       <button
         type="button"
         onClick={() => navigate({ page: 'servers' })}
-        className="inline-flex w-fit items-center gap-1.5 text-[13px] text-muted hover:text-foreground"
+        className="-my-2 inline-flex h-11 w-fit items-center gap-1.5 text-[13px] text-muted hover:text-foreground sm:my-0 sm:h-auto"
       >
         <ChevronLeft className="h-4 w-4" /> All servers
       </button>
@@ -532,138 +485,156 @@ export function ServerScreen({
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="truncate text-lg font-semibold">{server.name}</h1>
             <Badge tone={linkTone(server.link.state)}>link {server.link.state}</Badge>
-            {problem && <Badge tone="danger">{problem}</Badge>}
           </div>
-          <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted">
+          <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted">
             <span className="font-mono">{server.host}</span>
-            <span>cover {server.coverDomain}</span>
-            {server.agentVersion && <span>agent {server.agentVersion}</span>}
-            {server.telemtVersion && <span>proxy {server.telemtVersion}</span>}
+            {server.coverDomain && <span>cover {server.coverDomain}</span>}
+            {server.agentVersion && (
+              <span className="inline-flex items-center gap-1.5">
+                agent {server.agentVersion}
+                {updates.agent && chip('agent')}
+              </span>
+            )}
+            {server.telemtVersion && (
+              <span className="inline-flex items-center gap-1.5">
+                proxy {server.telemtVersion}
+                {updates.telemt && chip('telemt')}
+              </span>
+            )}
             {agent && !down && <span>up {formatDuration(agent.uptimeSec)}</span>}
           </div>
         </div>
-        <div className="flex flex-wrap gap-2">
-          {bg.running && bg.followed && modal?.kind !== 'job' && (
-            <Button size="sm" onClick={() => setModal({ kind: 'job' })}>
-              <Spinner className="h-3.5 w-3.5" /> {JOB_COPY[bg.followed.kind].running}
-            </Button>
-          )}
-          <Button size="sm" busy={acting === 'restart'} disabled={down} onClick={restart}>
-            <RefreshCw className="h-3.5 w-3.5" /> Restart proxy
-          </Button>
+        <div role="group" aria-label="Server actions" className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
           {server.registered && (
-            <Button size="sm" onClick={() => setModal({ kind: 'repair' })}>
-              <Wrench className="h-3.5 w-3.5" /> Repair
-            </Button>
-          )}
-          <Menu
-            trigger={
-              <Button size="icon" aria-label="More actions">
-                <Ellipsis className="h-4 w-4" />
+            <>
+              <Button
+                size="sm"
+                busy={!!restart}
+                disabled={down || server.proxyStopped}
+                title={down ? NEEDS_LINK : server.proxyStopped ? 'Start the proxy first' : undefined}
+                onClick={() => setModal({ kind: 'restart' })}
+              >
+                {!restart && <RefreshCw className="h-3.5 w-3.5" />} {restart ? 'Restarting…' : 'Restart proxy'}
               </Button>
-            }
-            items={[
-              {
-                label: 'Update agent',
-                icon: <Download />,
-                onSelect: () => void startJob('update-agent', () => api.update(server.id, 'agent')),
-              },
-              {
-                label: 'Update proxy',
-                icon: <Download />,
-                onSelect: () => void startJob('update-telemt', () => api.update(server.id, 'telemt')),
-              },
-              { label: 'Rotate keys', icon: <KeyRound />, onSelect: () => setModal({ kind: 'rotate' }) },
-              { label: 'Rename', icon: <Pencil />, onSelect: () => setModal({ kind: 'rename' }) },
-              {
-                label: 'Remove server',
-                icon: <Trash2 />,
-                danger: true,
-                onSelect: () => setModal({ kind: 'remove' }),
-              },
-            ]}
-          />
+              {server.proxyStopped ? (
+                <Button size="sm" variant="primary" busy={starting} onClick={startProxy}>
+                  <Play className="h-3.5 w-3.5" /> Start proxy
+                </Button>
+              ) : (
+                <Button size="sm" disabled={down} title={down ? NEEDS_LINK : undefined} onClick={() => setModal({ kind: 'stop' })}>
+                  <Square className="h-3.5 w-3.5" /> Stop proxy
+                </Button>
+              )}
+              <Button size="sm" onClick={() => setModal({ kind: 'repair' })}>
+                <Wrench className="h-3.5 w-3.5" /> Repair
+              </Button>
+            </>
+          )}
+          <Menu label="More actions" size="sm" className={cx('sm:w-8 sm:px-0', !server.registered && 'col-span-2')} items={menu}>
+            <Ellipsis className="h-4 w-4" />
+            <span className="sm:hidden">More</span>
+          </Menu>
         </div>
       </Card>
 
       {detail.error && <ErrorBox>{detail.error}</ErrorBox>}
-      {!server.registered ? (
-        <Notice tone="danger">
-          This server's install never finished, so it can't be repaired. Remove it, then add it again.
-        </Notice>
-      ) : down ? (
-        <Notice tone="danger">
-          The router cannot reach this server's agent
-          {server.lastSeenAt ? ` (last seen ${relativeTime(server.lastSeenAt)})` : ''}. Check that
-          the server is up and its address is in the domestic address list, or run a repair.
-        </Notice>
-      ) : server.link.state === 'degraded' ? (
-        <Notice tone="warn">
-          {server.link.up} of {server.link.total} link connections are up.
-        </Notice>
-      ) : null}
-      {agent?.telemt.crashLoop ? (
-        <Notice tone="danger">
-          The proxy keeps crashing{agent.telemt.lastExit ? ` (${agent.telemt.lastExit})` : ''}.
-          Check the logs, then restart it.
-        </Notice>
-      ) : agent && !agent.telemt.running ? (
-        <Notice tone="warn">The proxy is not running{heldReason(agent.telemt) ? `: ${heldReason(agent.telemt)}` : ''}.</Notice>
-      ) : null}
-      {!agent && !down && <Notice>Waiting for the agent's first status report.</Notice>}
-      {!down && !server.sync.healthy && server.sync.lastPushError && (
-        <Notice tone="warn">Settings are not applied yet: {server.sync.lastPushError}</Notice>
-      )}
+      <Attention
+        server={server}
+        tab={tab}
+        cause={cause}
+        actions={{
+          repair: () => setModal({ kind: 'repair' }),
+          restart: () => setModal({ kind: 'restart' }),
+          start: () => void startProxy(),
+          remove: () => setModal({ kind: 'remove' }),
+          changeCover: () => setModal({ kind: 'cover' }),
+          open,
+        }}
+      />
 
-      <div className="flex gap-1 overflow-x-auto border-b border-border">
-        {TABS.map((t) => (
-          <button
-            key={t}
-            type="button"
-            onClick={() => navigate({ page: 'server', id: server.id, tab: t })}
-            className={cx(
-              '-mb-px border-b-2 px-3 py-2 text-[13px] font-medium',
-              tab === t
-                ? 'border-accent text-foreground'
-                : 'border-transparent text-muted hover:text-foreground',
-            )}
-          >
-            {t.charAt(0).toUpperCase() + t.slice(1)}
-          </button>
-        ))}
+      <Tabs label="Server sections" idBase="srv" tabs={TABS} value={tab} onChange={open} />
+
+      <div role="tabpanel" id="srv-panel" aria-labelledby={`srv-${tab}`}>
+        {tab === 'users' && <UsersTab server={server} />}
+        {tab === 'status' && <StatusTab server={server} />}
+        {tab === 'settings' && (
+          <SettingsTab
+            server={server}
+            config={config}
+            onChangeCover={() => setModal({ kind: 'cover' })}
+            onChangePort={() => setModal({ kind: 'port' })}
+            onChanged={() => {
+              reload()
+              onConfigChanged()
+            }}
+          />
+        )}
+        {tab === 'logs' && <LogsTab server={server} />}
       </div>
 
-      {tab === 'users' && <UsersTab server={server} />}
-      {tab === 'status' && <StatusTab server={server} />}
-      {tab === 'settings' && (
-        <SettingsTab
+      {modal?.kind === 'rename' && <RenameDialog server={server} onClose={close} onRenamed={reload} />}
+      {modal?.kind === 'remove' && (
+        <RemoveDialog
           server={server}
-          config={config}
-          onChanged={() => {
-            reload()
-            onConfigChanged()
+          onClose={close}
+          onStarted={(jobId) => {
+            setRemoving(true)
+            void startJob(async () => ({ jobId }))
           }}
         />
       )}
-      {tab === 'logs' && <LogsTab server={server} />}
-
-      {modal?.kind === 'rename' && (
-        <RenameDialog server={server} onClose={() => setModal(null)} onRenamed={reload} />
-      )}
-      {modal?.kind === 'remove' && (
-        <RemoveDialog server={server} onClose={() => setModal(null)} onStarted={(jobId) => watch(jobId, 'uninstall')} />
-      )}
-      {modal?.kind === 'repair' && (
-        <RepairDialog server={server} onClose={() => setModal(null)} onStarted={(jobId) => watch(jobId, 'repair')} />
-      )}
+      {modal?.kind === 'repair' && <RepairDialog server={server} onClose={close} onStarted={(jobId) => void startJob(async () => ({ jobId }))} />}
       {modal?.kind === 'rotate' && (
-        <RotateDialog
-          onClose={() => setModal(null)}
-          onConfirm={() => startJob('rotate', () => api.rotate(server.id))}
-        />
+        <Confirm title="Renew the link keys?" action="Renew link keys" onClose={close} onConfirm={() => startJob(() => api.rotate(server.id))}>
+          <p>The agent and the router switch to new link keys. Users keep their links.</p>
+        </Confirm>
       )}
-      {modal?.kind === 'job' && bg.followed && (
-        <JobDialog key={bg.followed.jobId} job={bg.followed.job} kind={bg.followed.kind} onClose={closeJob} />
+      {modal?.kind === 'restart' && (
+        <Confirm
+          title={`Restart the proxy on ${server.name}?`}
+          action="Restart proxy"
+          onClose={close}
+          onConfirm={async () => {
+            await api.restart(server.id)
+            setRestart({ at: Date.now(), before: server.agent?.reportedAt })
+          }}
+        >
+          <Impact n={n}>{dropLine(server)}</Impact>
+          <p>The button shows "Restarting…" until the proxy reports back. If it isn't back within a minute, you'll see why.</p>
+        </Confirm>
+      )}
+      {modal?.kind === 'stop' && (
+        <Confirm
+          danger
+          title={`Stop the proxy on ${server.name}?`}
+          action="Stop proxy"
+          onClose={close}
+          onConfirm={async () => {
+            await api.stopProxy(server.id, true)
+            toast('Proxy stopped')
+            reload()
+          }}
+        >
+          <Impact n={n}>{dropLine(server).replace(/ Telegram reconnects.*$/, '')}</Impact>
+          <p>It stays off, across restarts and repairs, until you press Start proxy.</p>
+        </Confirm>
+      )}
+      {updateWhat && (
+        <Confirm
+          title={`Update the ${updateWhat === 'agent' ? 'agent' : 'proxy'} on ${server.name}${
+            (updateWhat === 'agent' ? updates.agentVersion : updates.telemtVersion) ? ` to ${updateWhat === 'agent' ? updates.agentVersion : updates.telemtVersion}` : ''
+          }?`}
+          action={updateWhat === 'agent' ? 'Update agent' : 'Update proxy'}
+          onClose={close}
+          onConfirm={() => startJob(() => api.update(server.id, updateWhat))}
+        >
+          <Impact n={n}>{dropLine(server)}</Impact>
+          <p>It takes a minute or two. The job tray at the top shows how it goes.</p>
+        </Confirm>
+      )}
+      {modal?.kind === 'cover' && <CoverDialog server={server} onClose={close} onChanged={reload} />}
+      {modal?.kind === 'port' && (
+        <LinkPortDialog server={server} onClose={close} onStart={(port) => startJob(() => api.linkPort(server.id, port))} />
       )}
     </div>
   )

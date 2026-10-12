@@ -1,5 +1,7 @@
 import type { Config } from 'tailwindcss'
 
+const tone = (n: string) => ({ DEFAULT: `var(--${n})`, text: `var(--${n}-text)`, tint: `var(--${n}-tint)` })
+
 // nasnet-panel's palette and shapes, so the plugin looks at home in the panel.
 export default {
   darkMode: ['selector', '[data-theme="dark"]'],
@@ -21,12 +23,9 @@ export default {
         'accent-strong': 'var(--accent-strong)',
         info: 'var(--info)',
         'accent-fg': 'var(--accent-fg)',
-        status: {
-          online: 'var(--status-online)',
-          warn: 'var(--status-warn)',
-          danger: 'var(--status-danger)',
-          idle: 'var(--status-idle)',
-        },
+        ok: tone('ok'),
+        warn: tone('warn'),
+        bad: tone('bad'),
       },
       borderRadius: { lg: '12px', md: '8px', sm: '4px' },
       boxShadow: { sm: 'var(--shadow-sm)', lg: 'var(--shadow-lg)' },

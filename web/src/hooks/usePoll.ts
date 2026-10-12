@@ -30,11 +30,25 @@ export function usePoll<T>(fn: () => Promise<T>, intervalMs: number, deps: unkno
     setLoading(true)
     setData(null)
     void reload()
+  }, [reload, ...deps])
+
+  // a new pace keeps what is shown
+  useEffect(() => {
     const timer = setInterval(() => {
       if (document.visibilityState === 'visible') void reload()
     }, intervalMs)
     return () => clearInterval(timer)
-  }, [intervalMs, reload, ...deps])
+  }, [intervalMs, reload])
 
-  return { data, error, loading, reload }
+  return { data, error, loading, reload, setData }
+}
+
+/** The time now, refreshed every `ms`, for "10 s ago" and running clocks. */
+export function useNow(ms = 1000) {
+  const [now, setNow] = useState(Date.now)
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), ms)
+    return () => clearInterval(t)
+  }, [ms])
+  return now
 }

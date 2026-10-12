@@ -1,8 +1,8 @@
 import type { Page } from '@playwright/test'
-import { AMS, FRA, dialog, expect, openServer, test, toast } from './fixtures'
+import { AMS, FRA, PAGE, alertDialog, dialog, expect, openServer, test, toast } from './fixtures'
 
-const row = (page: Page, name: string) =>
-  page.getByRole('row').filter({ has: page.getByText(name, { exact: true }) })
+const row = (page: Page, name: string) => page.getByRole('row').filter({ has: page.getByText(name, { exact: true }) })
+const names = (page: Page) => page.locator('tbody tr td:nth-child(2) > div:first-child').allTextContents()
 
 async function userAction(page: Page, name: string, action: string) {
   await page.getByRole('button', { name: `Actions for ${name}` }).click()
@@ -10,9 +10,9 @@ async function userAction(page: Page, name: string, action: string) {
 }
 
 async function shareLink(page: Page, name: string) {
-  await userAction(page, name, 'Share link')
+  await row(page, name).getByRole('button', { name: 'Share' }).click()
   const share = dialog(page, `Share ${name}'s proxy`)
-  const link = (await share.locator('.font-mono').first().textContent()) ?? ''
+  const link = (await share.locator('[data-link]').textContent()) ?? ''
   await share.getByRole('button', { name: 'Close' }).click()
   return link
 }
@@ -22,128 +22,328 @@ test.beforeEach(async ({ page }) => {
   await expect(row(page, 'alice')).toBeVisible()
 })
 
-test('shows users, their usage and state', async ({ page }) => {
-  await expect(page.locator('div').filter({ hasText: /^Users22$/ })).toHaveCount(1)
-  await expect(row(page, 'bob')).toContainText('910 MB')
-  await expect(row(page, 'alice')).toContainText('quota 50.0 GB')
-  await expect(row(page, 'alice')).toContainText('active')
-  await expect(row(page, 'old-phone')).toContainText('disabled')
-  await expect(row(page, 'expired-trial')).toContainText('expired')
-  await expect(row(page, 'used-up')).toContainText('over quota')
-  await expect(row(page, 'bob')).toContainText('never')
-  // Live sessions and client addresses are not reported, so not shown.
-  await expect(page.getByRole('columnheader', { name: 'Connections' })).toHaveCount(0)
-  await expect(page.getByRole('columnheader', { name: 'Devices' })).toHaveCount(0)
+test('each user has one status, devices, a quota bar, traffic and an expiry', async ({ page }) => {
+  const alice = row(page, 'alice')
+  await expect(alice).toContainText("Mom's tablet")
+  await expect(alice).toContainText('Online')
+  await expect(alice).toContainText(/\d+ connections/)
+  await expect(alice).toContainText('2 of 3')
+  await expect(alice).toContainText('devices now')
+  await expect(alice).toContainText('3.9 of 50 GB · 8%')
+  await expect(alice).toContainText('today')
+  await expect(alice).toContainText('in 30 days')
+  await expect(alice).toContainText('in 21 days')
+
+  const bob = row(page, 'bob')
+  await expect(bob).toContainText('Paused')
+  await expect(bob).toContainText('last seen 2 days ago')
+  await expect(bob).toContainText('No quota')
+  await expect(bob).toContainText('Never')
+  await expect(page.getByRole('switch', { name: 'Resume bob' })).not.toBeChecked()
+
+  // the switch only pauses: an expired or used-up user gets the fix instead
+  const trial = row(page, 'trial-7d')
+  await expect(trial).toContainText('Expired')
+  await expect(trial).toContainText('4.6 of 5 GB · 92%')
+  await expect(trial).toContainText('6 days ago')
+  await expect(trial.getByRole('button', { name: 'Renew +30 days' })).toBeVisible()
+  await expect(trial.getByRole('switch')).toHaveCount(0)
+  const usedUp = row(page, 'used-up')
+  await expect(usedUp).toContainText('Quota used')
+  await expect(usedUp).toContainText('10.0 of 10 GB · 100%')
+  await expect(usedUp.getByRole('button', { name: 'Reset usage' })).toBeVisible()
+  await expect(usedUp.getByRole('switch')).toHaveCount(0)
+
+  await expect(row(page, 'carol')).toContainText('Active')
+  await expect(row(page, 'carol')).toContainText('last seen 12 minutes ago')
+  await expect(row(page, 'dad_laptop')).toContainText('in 5 hours')
+  await expect(row(page, 'guest-wifi')).toContainText('never connected')
+  await expect(page.getByRole('columnheader', { name: 'Devices' })).toBeVisible()
+  await expect(page.getByRole('columnheader', { name: 'Quota' })).toBeVisible()
 })
 
-test('searches users', async ({ page }) => {
-  await page.getByLabel('Search users').fill('trial')
-  await expect(row(page, 'trial-7d')).toBeVisible()
-  await expect(row(page, 'expired-trial')).toBeVisible()
-  await expect(row(page, 'alice')).toHaveCount(0)
-  await page.getByLabel('Search users').fill('nobody-matches')
+test('the tiles show who can connect, who is online, today and the last 30 days', async ({ page }) => {
+  const main = page.locator('main')
+  await expect(main).toContainText('Can connect\n17 of 22\n3 paused · 1 expired · 1 quota used', { useInnerText: true })
+  await expect(main).toContainText('Online now\n6\non 21 devices', { useInnerText: true })
+  await expect(main).toContainText(/Today\n[\d.]+ [KMG]?B\n↑ /, { useInnerText: true })
+  await expect(main).toContainText(/Last 30 days\n[\d.]+ [KMG]?B\n↑ /, { useInnerText: true })
+  await expect(main.getByText(/^Updated \d+ s ago$/).filter({ visible: true })).toBeVisible()
+})
+
+test('filter chips count users and narrow the list', async ({ page }) => {
+  const chip = (name: string) => page.getByRole('button', { name: new RegExp(`^${name} \\d+$`) })
+  await expect(chip('All')).toHaveAttribute('aria-pressed', 'true')
+  await expect(chip('All')).toContainText('22')
+  await expect(chip('Online')).toContainText('6')
+  await expect(chip('Expiring soon')).toContainText('2')
+  await expect(chip('Quota nearly used')).toContainText('2')
+  await expect(chip('Paused')).toContainText('3')
+  await expect(chip('Expired')).toContainText('1')
+  await expect(chip('Quota used')).toContainText('1')
+
+  await chip('Paused').click()
+  await expect(chip('Paused')).toHaveAttribute('aria-pressed', 'true')
+  expect(await names(page)).toEqual(['bob', 'guest-wifi', 'judy'])
+  await chip('Expiring soon').click()
+  expect(await names(page)).toEqual(['dad_laptop', 'heidi'])
+  await chip('Quota nearly used').click()
+  expect(await names(page)).toEqual(['grace', 'trial-7d'])
+  await chip('Online').click()
+  expect(await names(page)).toEqual(['alice', 'dad_laptop', 'dave', 'family', 'kids-ipad', 'office'])
+  await expect(page.getByText('Showing 6 of 22 · sorted by name')).toBeVisible()
+  await chip('All').click()
+  await expect(page.getByText('Showing 22 of 22 · sorted by name')).toBeVisible()
+})
+
+test('sorts by usage, expiry and last seen', async ({ page }) => {
+  const sortBy = async (label: string) => {
+    await page.getByRole('button', { name: /^Sort: / }).click()
+    await expect(page.getByRole('menuitemradio', { checked: true })).toBeVisible()
+    await page.getByRole('menuitemradio', { name: label }).click()
+  }
+  await sortBy('Usage')
+  await expect(page.getByRole('button', { name: 'Sort: Usage' })).toBeVisible()
+  expect((await names(page))[0]).toBe('office')
+  await sortBy('Expiry')
+  expect((await names(page)).slice(0, 3)).toEqual(['trial-7d', 'dad_laptop', 'heidi'])
+  await sortBy('Last seen')
+  expect((await names(page)).slice(0, 6)).toEqual(['alice', 'dad_laptop', 'dave', 'family', 'kids-ipad', 'office'])
+  await expect(page.getByText('sorted by last seen')).toBeVisible()
+})
+
+test('searches names and notes', async ({ page }) => {
+  const search = page.getByLabel('Search users')
+  await search.fill('tablet')
+  expect(await names(page)).toEqual(['alice'])
+  await search.fill('TRIAL')
+  expect(await names(page)).toEqual(['trial-7d'])
+  await search.fill('nobody-matches')
   await expect(page.getByText('No user matches.')).toBeVisible()
 })
 
-test('adds a user with limits and shares the link', async ({ page }) => {
+test('adds a user with a note, limits and an expiry preset, then shares the link', async ({ page }) => {
+  const sent: Record<string, unknown>[] = []
+  page.on('request', (r) => r.method() === 'POST' && r.url().endsWith('/servers/1/users') && sent.push(JSON.parse(r.postData() ?? '{}')))
   await page.getByRole('button', { name: 'Add user' }).click()
   const add = dialog(page, 'Add a user')
-  await add.getByLabel('Name').fill('zed')
+  await add.getByLabel('Name', { exact: true }).fill('zed')
+  await add.getByLabel('Note (optional)').fill("Zed's phone")
   await add.getByLabel('Traffic quota').fill('10')
-  await add.getByLabel('Expires').fill('2031-01-01')
   await add.getByLabel('Devices').fill('2')
+  await expect(add.getByRole('button', { name: '30 days' })).toHaveAttribute('aria-pressed', 'true')
+  await add.getByRole('button', { name: '7 days' }).click()
+  await expect(add).toContainText(/Access ends \d+ \w{3}( \d{4})? at 23:59 UTC\./)
+  await add.getByRole('button', { name: 'Never' }).click()
+  await expect(add).toContainText('No expiry.')
+  await add.getByRole('button', { name: '7 days' }).click()
   await add.getByRole('button', { name: 'Add user' }).click()
 
   await expect(toast(page, 'zed added')).toBeVisible()
+  expect(sent[0]).toMatchObject({ name: 'zed', note: "Zed's phone", quotaBytes: 10e9, maxIps: 2 })
+  expect(String(sent[0].expiresAt)).toMatch(/T23:59:59Z$/)
   const share = dialog(page, "Share zed's proxy")
   await expect(share.getByRole('img', { name: 'QR code of the proxy link' })).toBeVisible()
-  await expect(share).toContainText('tg://proxy?server=203.0.113.10&port=443&secret=ee')
+  await expect(share.locator('[data-link]')).toHaveText(/^https:\/\/t\.me\/proxy\?server=203\.0\.113\.10&port=443&secret=ee/)
+  await expect(share.getByRole('button', { name: 'Copy link' })).toBeVisible()
   await expect(share.getByRole('button', { name: 'Copy tg:// link' })).toBeVisible()
-  await expect(share.getByRole('button', { name: 'Copy t.me link' })).toBeVisible()
   await share.getByRole('button', { name: 'Close' }).click()
 
-  await expect(row(page, 'zed')).toContainText('quota 10.0 GB')
-  await userAction(page, 'zed', 'Edit limits')
-  const edit = dialog(page, 'Limits for zed')
+  const zed = row(page, 'zed')
+  await expect(zed).toContainText("Zed's phone")
+  await expect(zed).toContainText('0.0 of 10 GB · 0%')
+  await expect(zed).toContainText('0 of 2')
+  await expect(zed).toContainText('in 7 days')
+  await userAction(page, 'zed', 'Edit')
+  const edit = dialog(page, 'Edit zed')
   await expect(edit.getByLabel('Devices')).toHaveValue('2')
   await expect(edit.getByLabel('Traffic quota')).toHaveValue('10')
-  await expect(edit.getByLabel('Expires')).toHaveValue('2031-01-01')
+  await expect(edit.getByLabel('Note (optional)')).toHaveValue("Zed's phone")
+  await expect(edit.getByRole('button', { name: 'Pick a date' })).toHaveAttribute('aria-pressed', 'true')
+  await expect(edit.getByLabel('Last day')).toHaveValue(String(sent[0].expiresAt).slice(0, 10))
+})
+
+test('keeps an existing secret, and refuses a bad or taken one', async ({ page }) => {
+  const hex = '0123456789abcdef0123456789abcdef'
+  await page.getByRole('button', { name: 'Add user' }).click()
+  const add = dialog(page, 'Add a user')
+  await add.getByLabel('Name', { exact: true }).fill('moved')
+  await add.getByRole('button', { name: 'Advanced' }).click()
+  const secret = add.getByLabel('Use an existing secret')
+  await expect(add).toContainText('their old link keeps working')
+  await secret.fill('not-a-secret')
+  await add.getByRole('button', { name: 'Add user' }).click()
+  await expect(secret).toHaveAttribute('aria-invalid', 'true')
+  await expect(secret).toHaveAccessibleDescription('Paste the 32-character secret, or one that starts with dd or ee.')
+  await secret.fill(`dd${hex}`)
+  await add.getByRole('button', { name: 'Add user' }).click()
+  await expect(toast(page, 'moved added')).toBeVisible()
+  await expect(dialog(page, "Share moved's proxy").locator('[data-link]')).toContainText(`secret=ee${hex}`)
+  await dialog(page, "Share moved's proxy").getByRole('button', { name: 'Close' }).click()
+
+  await page.getByRole('button', { name: 'Add user' }).click()
+  await add.getByLabel('Name', { exact: true }).fill('moved2')
+  await add.getByRole('button', { name: 'Advanced' }).click()
+  await add.getByLabel('Use an existing secret').fill(hex)
+  await add.getByRole('button', { name: 'Add user' }).click()
+  await expect(add.getByRole('alert')).toContainText('another user on this server already has this secret')
 })
 
 test('rejects bad and duplicate user names', async ({ page }) => {
   await page.getByRole('button', { name: 'Add user' }).click()
   const add = dialog(page, 'Add a user')
-  await add.getByLabel('Name').fill('bad name')
+  await add.getByLabel('Name', { exact: true }).fill('bad name')
   await add.getByRole('button', { name: 'Add user' }).click()
   await expect(add).toContainText("Use 1–32 letters, digits, '.', '_' or '-'")
-  await add.getByLabel('Name').fill('alice')
+  await expect(add.getByLabel('Name', { exact: true })).toHaveAttribute('aria-invalid', 'true')
+  await add.getByLabel('Name', { exact: true }).fill('alice')
   await add.getByRole('button', { name: 'Add user' }).click()
   await expect(add).toContainText('a user named alice already exists')
-  await add.getByLabel('Name').fill('ok')
+  await add.getByLabel('Name', { exact: true }).fill('ok')
   await add.getByLabel('Traffic quota').fill('-5')
   await add.getByRole('button', { name: 'Add user' }).click()
   await expect(add).toContainText('Traffic quota must be a positive number')
 })
 
-test('edits and clears limits', async ({ page }) => {
-  await userAction(page, 'alice', 'Edit limits')
-  const edit = dialog(page, 'Limits for alice')
+test('edits the note and clears limits and expiry', async ({ page }) => {
+  await userAction(page, 'alice', 'Edit')
+  const edit = dialog(page, 'Edit alice')
   await expect(edit.getByLabel('Traffic quota')).toHaveValue('50')
   await expect(edit.getByLabel('Devices')).toHaveValue('3')
+  await expect(edit.getByRole('button', { name: 'Pick a date' })).toHaveAttribute('aria-pressed', 'true')
+  await edit.getByLabel('Note (optional)').fill('Mum')
   await edit.getByLabel('Traffic quota').fill('')
-  await edit.getByLabel('Expires').fill('')
+  await edit.getByRole('button', { name: 'Never' }).click()
   await edit.getByRole('button', { name: 'Save' }).click()
   await expect(toast(page, 'alice updated')).toBeVisible()
-  await expect(row(page, 'alice')).not.toContainText('quota')
-  await expect(row(page, 'alice')).toContainText('never')
+  await expect(row(page, 'alice')).toContainText('Mum')
+  await expect(row(page, 'alice')).toContainText('No quota')
+  await expect(row(page, 'alice')).toContainText('Never')
 })
 
-test('disables and enables a user', async ({ page }) => {
-  await page.getByRole('switch', { name: 'Disable bob' }).click()
-  await expect(toast(page, 'bob disabled')).toBeVisible()
-  await expect(row(page, 'bob')).toContainText('disabled')
-  await page.getByRole('switch', { name: 'Enable bob' }).click()
-  await expect(toast(page, 'bob enabled')).toBeVisible()
-  await expect(page.getByRole('switch', { name: 'Disable bob' })).toBeChecked()
+test('pauses and resumes a user with the switch', async ({ page }) => {
+  await page.getByRole('switch', { name: 'Pause alice' }).click()
+  await expect(toast(page, 'alice paused')).toBeVisible()
+  await expect(row(page, 'alice')).toContainText('Paused')
+  await page.getByRole('switch', { name: 'Resume alice' }).click()
+  await expect(toast(page, 'alice resumed')).toBeVisible()
+  await expect(page.getByRole('switch', { name: 'Pause alice' })).toBeChecked()
+  await expect(row(page, 'alice')).toContainText('Online')
 })
 
-test('gives a user a new secret', async ({ page }) => {
+test('renews an expired user and resets a used-up one from the row', async ({ page }) => {
+  await row(page, 'trial-7d').getByRole('button', { name: 'Renew +30 days' }).click()
+  await expect(toast(page, /^trial-7d renewed until \d+ \w{3}/)).toBeVisible()
+  await expect(row(page, 'trial-7d')).toContainText('Active')
+  await expect(row(page, 'trial-7d')).toContainText('in 30 days')
+
+  await row(page, 'used-up').getByRole('button', { name: 'Reset usage' }).click()
+  await alertDialog(page, "Reset used-up's usage?").getByRole('button', { name: 'Reset usage' }).click()
+  await expect(toast(page, "used-up's usage was reset")).toBeVisible()
+  await expect(row(page, 'used-up')).toContainText('Active')
+  await expect(row(page, 'used-up')).toContainText('0.0 of 10 GB · 0%')
+})
+
+test("replaces a user's link", async ({ page }) => {
   const before = await shareLink(page, 'alice')
-  await userAction(page, 'alice', 'New secret')
-  await dialog(page, 'New secret for alice?').getByRole('button', { name: 'Make new secret' }).click()
-  await expect(toast(page, 'alice has a new secret')).toBeVisible()
+  await userAction(page, 'alice', "Replace this user's link")
+  await alertDialog(page, "Replace alice's link?").getByRole('button', { name: 'Replace link' }).click()
+  await expect(toast(page, 'alice has a new link')).toBeVisible()
   const share = dialog(page, "Share alice's proxy")
   await expect(share).toBeVisible()
-  const after = (await share.locator('.font-mono').first().textContent()) ?? ''
-  expect(after).toMatch(/^tg:\/\/proxy\?/)
+  const after = (await share.locator('[data-link]').textContent()) ?? ''
+  expect(after).toMatch(/^https:\/\/t\.me\/proxy\?/)
   expect(after).not.toBe(before)
-})
-
-test('resets usage, which lifts a used-up quota', async ({ page }) => {
-  await expect(row(page, 'used-up')).toContainText('over quota')
-  await userAction(page, 'used-up', 'Reset usage')
-  await dialog(page, "Reset used-up's usage?").getByRole('button', { name: 'Reset usage' }).click()
-  await expect(toast(page, "used-up's usage was reset")).toBeVisible()
-  await expect(row(page, 'used-up')).toContainText('active')
-  await expect(row(page, 'used-up')).toContainText('0 B')
 })
 
 test('deletes a user after confirming', async ({ page }) => {
   await userAction(page, 'bob', 'Delete user')
-  const confirm = dialog(page, 'Delete bob?')
+  const confirm = alertDialog(page, 'Delete bob?')
   await confirm.getByRole('button', { name: 'Cancel' }).click()
   await expect(row(page, 'bob')).toBeVisible()
   await userAction(page, 'bob', 'Delete user')
-  await dialog(page, 'Delete bob?').getByRole('button', { name: 'Delete user' }).click()
+  await alertDialog(page, 'Delete bob?').getByRole('button', { name: 'Delete user' }).click()
   await expect(toast(page, 'bob deleted')).toBeVisible()
   await expect(row(page, 'bob')).toHaveCount(0)
 })
 
-test('users of a server with its link down can still be managed', async ({ page }) => {
+test('acts on several users at once: pause, resume, renew and delete', async ({ page }) => {
+  const pick = (name: string) => page.getByRole('checkbox', { name: `Select ${name}`, exact: true }).check()
+  await pick('bob')
+  await pick('guest-wifi')
+  await expect(page.getByText('2 selected')).toBeVisible()
+  await page.getByRole('button', { name: 'Resume', exact: true }).click()
+  await expect(toast(page, '2 users resumed')).toBeVisible()
+  await expect(row(page, 'bob')).toContainText('Active')
+  await expect(row(page, 'guest-wifi')).toContainText('Active')
+  await expect(page.getByText('2 selected')).toHaveCount(0)
+
+  await pick('dave')
+  await page.getByRole('button', { name: 'Pause', exact: true }).click()
+  await expect(toast(page, '1 user paused')).toBeVisible()
+  await expect(row(page, 'dave')).toContainText('Paused')
+
+  // a user without an expiry is left alone
+  await pick('trial-7d')
+  await pick('grace')
+  await page.getByRole('button', { name: 'Renew +30 days', exact: true }).last().click()
+  await expect(toast(page, '1 user renewed; 1 has no expiry')).toBeVisible()
+  await expect(row(page, 'trial-7d')).toContainText('Active')
+
+  await pick('bob')
+  await pick('carol')
+  await page.getByRole('button', { name: 'Delete', exact: true }).click()
+  const confirm = alertDialog(page, 'Delete 2 users?')
+  await expect(confirm).toContainText('bob and carol lose their links and are removed from the server.')
+  await confirm.getByRole('button', { name: 'Delete 2 users' }).click()
+  await expect(toast(page, '2 users deleted')).toBeVisible()
+  await expect(row(page, 'bob')).toHaveCount(0)
+  await expect(row(page, 'carol')).toHaveCount(0)
+
+  await page.getByRole('checkbox', { name: 'Select all users' }).check()
+  await expect(page.getByText('20 selected')).toBeVisible()
+  await page.getByRole('button', { name: 'Clear' }).click()
+  await expect(page.getByText('20 selected')).toHaveCount(0)
+})
+
+test('the share sheet copies the t.me link first and lists the extra cover names', async ({ page, request, context }) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write'])
+  await request.patch('/api/servers/1/settings', { data: { proxyOptions: { extraCoverNames: ['cdn.example.com', 'static.example.org'] } }, headers: PAGE })
+  await page.reload()
+  await row(page, 'alice').getByRole('button', { name: 'Share' }).click()
+  const share = dialog(page, "Share alice's proxy")
+  const link = (await share.locator('[data-link]').textContent()) ?? ''
+  expect(link).toMatch(/^https:\/\/t\.me\/proxy\?/)
+  await share.getByRole('button', { name: 'Copy link' }).click()
+  await expect(share.getByRole('button', { name: 'Copied' })).toBeVisible()
+  await expect(share.locator('[aria-live]').first()).toHaveText('Copied')
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(link)
+  await expect(share).toContainText('Other cover names')
+  await expect(share).toContainText('cdn.example.com')
+  await share.getByRole('button', { name: 'Copy the static.example.org link' }).click()
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toContain(Buffer.from('static.example.org').toString('hex'))
+})
+
+test('users of an unreachable server are dimmed under a notice and can still be managed', async ({ page }) => {
   await openServer(page, AMS)
-  await expect(page.getByText('Changes reach the server when its link is back.')).toBeVisible()
-  await page.getByRole('switch', { name: 'Disable spare2' }).click()
-  await expect(toast(page, 'spare2 disabled')).toBeVisible()
+  await expect(page.getByText(/This server is unreachable since .+\. What you change here applies when it's back\./)).toBeVisible()
+  await expect(row(page, 'spare1')).toContainText('Unknown')
+  await expect(row(page, 'spare1')).toContainText('server unreachable')
+  await expect(row(page, 'spare2')).toContainText('never connected')
+  await expect(page.locator('main')).toContainText('unknown while unreachable')
+  await expect(page.locator('main')).toContainText('once the server is back')
+  await page.getByRole('switch', { name: 'Pause spare2' }).click()
+  await expect(toast(page, 'spare2 paused')).toBeVisible()
+})
+
+test('an agent too old to say who is online shows dashes, not zeros', async ({ page, request }) => {
+  await request.post('/api/__reset', { data: { oldAgent: true } })
+  await page.reload()
+  await expect(row(page, 'alice')).toContainText('Active')
+  await expect(row(page, 'alice')).toContainText('–')
+  await expect(page.locator('main')).toContainText('after an agent update')
+  await page.goto('/')
+  await expect(page.getByRole('button', { name: /Frankfurt VPS/ })).toContainText('22 users')
 })
 
 test('the actions menu on the last row is not clipped', async ({ page }) => {
