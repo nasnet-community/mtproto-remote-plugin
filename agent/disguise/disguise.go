@@ -21,6 +21,9 @@ type Checker struct {
 	Dial    func(ctx context.Context, network, addr string) (net.Conn, error)
 	Lookup  func(ctx context.Context, host string) ([]string, error)
 	Timeout time.Duration
+	// ProxyOnly is for a site that only fronts telemt, with no REALITY link to copy
+	// it: h2 and the size of its first flight don't matter then.
+	ProxyOnly bool
 }
 
 // Check never returns an error: every failure becomes a field the UI can show.
@@ -82,23 +85,27 @@ func (c Checker) Check(ctx context.Context, domain string) ctrl.DisguiseResult {
 		res.TLS13, res.X25519, res.H2 = st.Version == tls.VersionTLS13, true, st.NegotiatedProtocol == "h2"
 		res.CertOK = false
 		res.LatencyMS = int(time.Since(start).Milliseconds())
-		res.OK = res.TLS13 && res.H2
-		if !res.H2 {
-			res.Err = "the site does not offer h2"
-		}
-		fl.judge(&res)
+		c.verdict(&res, fl)
 		return res
 	}
 	st := conn.ConnectionState()
 	res.TLS13, res.X25519, res.CertOK = st.Version == tls.VersionTLS13, true, true
 	res.H2 = st.NegotiatedProtocol == "h2"
 	res.LatencyMS = int(time.Since(start).Milliseconds())
+	c.verdict(&res, fl)
+	return res
+}
+
+func (c Checker) verdict(res *ctrl.DisguiseResult, fl *flight) {
+	if c.ProxyOnly {
+		res.OK = res.TLS13
+		return
+	}
 	res.OK = res.TLS13 && res.H2
 	if !res.H2 {
 		res.Err = "the site does not offer h2"
 	}
-	fl.judge(&res)
-	return res
+	fl.judge(res)
 }
 
 // realityMax is how much of the site's first flight REALITY buffers to copy its shape.

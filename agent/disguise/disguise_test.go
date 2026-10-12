@@ -146,3 +146,16 @@ func TestSiteWithAHandshakeTooBigToCopyFails(t *testing.T) {
 		t.Fatalf("%+v", r)
 	}
 }
+
+func TestProxyOnlyNeedsNeitherH2NorASmallFlight(t *testing.T) {
+	c, dom := site(t, nil)
+	c.ProxyOnly = true
+	if r := c.Check(context.Background(), dom); !r.OK || r.H2 || r.Err != "" {
+		t.Fatalf("a site without h2 = %+v", r)
+	}
+	c, dom = site(t, func(s *httptest.Server) { s.TLS = &tls.Config{MaxVersion: tls.VersionTLS12} })
+	c.ProxyOnly = true
+	if r := c.Check(context.Background(), dom); r.OK {
+		t.Fatalf("TLS 1.2 only still fails: %+v", r)
+	}
+}
