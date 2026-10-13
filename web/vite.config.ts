@@ -15,7 +15,7 @@ export default defineConfig({
   define: { __LOCAL__: JSON.stringify(LOCAL) },
   plugins: [
     viteSingleFile(),
-    { name: 'title', transformIndexHtml: (html) => (LOCAL ? html.replace('<title>MTProto Remote</title>', '<title>Local MTProto</title>') : html) },
+    { name: 'title', transformIndexHtml: (html) => (LOCAL ? html.replace('<title>Remote MTProto</title>', '<title>Local MTProto</title>') : html) },
     ...(process.env.MOCK ? [LOCAL ? mockLocal() : mockApi()] : []),
   ],
   resolve: {

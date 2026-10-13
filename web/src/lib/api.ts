@@ -396,7 +396,7 @@ export const local = {
   newPort: () => request<LocalProxy>('POST', 'local/new-port'),
 }
 
-/** The proxy as the screens shared with MTProto Remote read a server. */
+/** The proxy as the screens shared with Remote MTProto read a server. */
 export function asServer(p: LocalProxy): Server {
   const t = p.proxy
   return {

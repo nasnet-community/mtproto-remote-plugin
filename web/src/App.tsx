@@ -59,7 +59,7 @@ export function App() {
             className="flex shrink-0 items-center gap-2.5 font-semibold"
           >
             <TelegramMtprotoLogo size={30} />
-            {__LOCAL__ ? 'Local MTProto' : 'MTProto Remote'}
+            {__LOCAL__ ? 'Local MTProto' : 'Remote MTProto'}
           </a>
           <span className="hidden truncate text-xs text-faint md:inline">
             {__LOCAL__ ? 'A Telegram proxy that runs on this router' : 'Proxy servers that reach Telegram through this router'}

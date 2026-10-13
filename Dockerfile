@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-# Two images: MTProto Remote is the default (the last stage), Local MTProto is --target local.
+# Two images: Remote MTProto is the default (the last stage), Local MTProto is --target local.
 
 # the router's architecture, for the stage below that picks a telemt build
 ARG TARGETARCH
@@ -119,7 +119,7 @@ EXPOSE 8080 8443
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD wget -qO- http://127.0.0.1:8080/health || exit 1
 ENTRYPOINT ["/mtproto-local"]
 
-# --- MTProto Remote ---
+# --- Remote MTProto ---
 
 # busybox for a shell and wget (the healthcheck), CA roots for HTTPS.
 # Root because RouterOS mounts are root-owned (check on a device before adding USER).

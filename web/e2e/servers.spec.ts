@@ -370,7 +370,7 @@ test('the logo goes home without reloading the page', async ({ page }) => {
   await page.goto('/__panel-view#/servers/1')
   await expect(page.getByRole('heading', { name: 'Frankfurt VPS' })).toBeVisible()
   await page.evaluate(() => ((window as unknown as { kept: boolean }).kept = true))
-  await page.getByRole('link', { name: 'MTProto Remote' }).click()
+  await page.getByRole('link', { name: 'Remote MTProto' }).click()
   await expect(page.getByRole('heading', { name: 'Servers' })).toBeVisible()
   expect(new URL(page.url()).pathname).toBe('/__panel-view')
   expect(await page.evaluate(() => (window as unknown as { kept?: boolean }).kept)).toBe(true)

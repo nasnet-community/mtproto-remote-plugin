@@ -1,5 +1,5 @@
 // Package page holds Local MTProto's single-file web app: the same page as
-// MTProto Remote's, built for one proxy on the router itself.
+// Remote MTProto's, built for one proxy on the router itself.
 package page
 
 import "embed"
