@@ -7,27 +7,48 @@ export function usePoll<T>(fn: () => Promise<T>, intervalMs: number, deps: unkno
   const [loading, setLoading] = useState(true)
   const fnRef = useRef(fn)
   fnRef.current = fn
+  // bumped when deps change, so a reply for the old deps (another server) is dropped
+  const generation = useRef(0)
 
   const reload = useCallback(async () => {
+    const mine = generation.current
     try {
-      setData(await fnRef.current())
+      const value = await fnRef.current()
+      if (mine !== generation.current) return
+      setData(value)
       setError(null)
     } catch (e) {
+      if (mine !== generation.current) return
       setError(e instanceof Error ? e.message : String(e))
     } finally {
-      setLoading(false)
+      if (mine === generation.current) setLoading(false)
     }
   }, [])
 
   useEffect(() => {
+    generation.current += 1
     setLoading(true)
     setData(null)
     void reload()
+  }, [reload, ...deps])
+
+  // a new pace keeps what is shown
+  useEffect(() => {
     const timer = setInterval(() => {
       if (document.visibilityState === 'visible') void reload()
     }, intervalMs)
     return () => clearInterval(timer)
-  }, [intervalMs, reload, ...deps])
+  }, [intervalMs, reload])
 
-  return { data, error, loading, reload }
+  return { data, error, loading, reload, setData }
+}
+
+/** The time now, refreshed every `ms`, for "10 s ago" and running clocks. */
+export function useNow(ms = 1000) {
+  const [now, setNow] = useState(Date.now)
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), ms)
+    return () => clearInterval(t)
+  }, [ms])
+  return now
 }

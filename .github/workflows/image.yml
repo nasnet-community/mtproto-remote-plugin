@@ -18,74 +18,109 @@ concurrency:
 
 env:
   IMAGE: ghcr.io/nasnet-community/mtproto-remote-plugin
-  # The image is the binary alone, so this caps the image size too.
-  MAX_BYTES: 10000000
+  # the stripped Go binary before UPX: what the router unpacks into RAM (amd64 measured 10.01 MB)
+  MAX_UNPACKED: 10500000
+  # the UPX-packed binary the image ships: ~25% over the largest measured (amd64, 3.05 MB)
+  MAX_PACKED: 3800000
 
 jobs:
-  build:
+  size:
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
         include:
           - platform: linux/amd64
-            suffix: amd64
           - platform: linux/arm64
-            suffix: arm64
+          - platform: linux/arm/v7
     steps:
       - uses: actions/checkout@v7
 
       - uses: docker/setup-buildx-action@v4
 
-      - name: Build binary
+      - name: Build the binary
         uses: docker/build-push-action@v7
         with:
           context: .
+          target: binary
           platforms: ${{ matrix.platform }}
           provenance: false
           sbom: false
           outputs: type=local,dest=./out
-          cache-from: type=gha,scope=${{ matrix.suffix }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.suffix }}
 
       - name: Check size
         run: |
           set -euo pipefail
-          size=$(stat -c %s out/mtproto-remote)
-          echo "mtproto-remote-linux-${{ matrix.suffix }}: $size bytes" | tee -a "$GITHUB_STEP_SUMMARY"
-          if [ "$size" -ge "$MAX_BYTES" ]; then
-            echo "::error::binary is $size bytes, limit is $MAX_BYTES" >&2
-            exit 1
+          f=$(find out -name mtproto-remote -type f | head -1)
+          packed=$(stat -c %s "$f")
+          unpacked=$(cat "$(dirname "$f")/unpacked-size")
+          echo "${{ matrix.platform }}: $unpacked bytes, $packed packed" | tee -a "$GITHUB_STEP_SUMMARY"
+          ok=0
+          if [ "$unpacked" -gt "$MAX_UNPACKED" ]; then
+            echo "::error::the binary is $unpacked bytes before packing, limit is $MAX_UNPACKED" >&2
+            ok=1
           fi
+          if [ "$packed" -gt "$MAX_PACKED" ]; then
+            echo "::error::the packed binary is $packed bytes, limit is $MAX_PACKED" >&2
+            ok=1
+          fi
+          exit $ok
+
+      # upx -t only reads the archive: run the packed binary on its own arch, under QEMU
+      - uses: docker/setup-qemu-action@v4
+
+      - name: Run the packed binary
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
+          f=$(find out -name mtproto-remote -type f | head -1)
+          docker pull -q --platform "$PLATFORM" busybox:musl
+          docker run --rm --platform "$PLATFORM" -v "$PWD/$(dirname "$f"):/o:ro" -e DATA_DIR=/tmp/data -e PLATFORM busybox:musl sh -c '
+            set -e
+            v=$(/o/mtproto-remote version)
+            /o/mtproto-remote >/tmp/log 2>&1 & pid=$!
+            for i in $(seq 60); do
+              if body=$(wget -qO- http://127.0.0.1:8080/health 2>/dev/null) && [ "$body" = ok ]; then
+                echo "$PLATFORM: version $v, health ok after ${i}s"; kill $pid; exit 0
+              fi
+              sleep 1
+            done
+            echo "no answer on /health in 60 s" >&2; cat /tmp/log >&2; exit 1' | tee -a "$GITHUB_STEP_SUMMARY"
+
+  image:
+    needs: size
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-buildx-action@v4
 
       - id: meta
-        if: github.event_name == 'push'
         uses: docker/metadata-action@v6
         with:
           images: ${{ env.IMAGE }}
-          flavor: |
-            latest=false
-            suffix=-${{ matrix.suffix }}
           tags: |
             type=raw,value=main,enable=${{ github.ref == 'refs/heads/main' }}
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
 
-      - if: github.event_name == 'push'
-        uses: docker/login-action@v4
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Push image
-        if: github.event_name == 'push'
-        uses: docker/build-push-action@v7
+      # one manifest list for all three: it is what RouterOS pulls
+      - uses: docker/build-push-action@v7
         with:
           context: .
-          platforms: ${{ matrix.platform }}
+          platforms: linux/amd64,linux/arm64,linux/arm/v7
           push: true
           provenance: false
           sbom: false
+          build-args: VERSION=${{ steps.meta.outputs.version }}
           tags: ${{ steps.meta.outputs.tags }}
-          cache-from: type=gha,scope=${{ matrix.suffix }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

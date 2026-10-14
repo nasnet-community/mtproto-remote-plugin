@@ -1,7 +1,13 @@
-target
-data
 .git
-.github
-tests
+dist
+data
+coverage.out
 web/node_modules
 web/dist
+web/dist-local
+web/playwright-report
+web/test-results
+internal/plugin/ui/index.html.gz
+internal/plugin/ui/index.html.br
+internal/local/page/index.html.gz
+internal/local/page/index.html.br
