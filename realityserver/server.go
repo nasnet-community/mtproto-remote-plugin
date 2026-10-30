@@ -1,6 +1,7 @@
 package realityserver
 
 import (
+	"crypto/ecdh"
 	"net"
 	"time"
 
@@ -17,11 +18,13 @@ type ServerConfig struct {
 
 func (c ServerConfig) build() *xr.Config {
 	var d net.Dialer
+	// reality takes the parsed key; a malformed one stays nil, which authenticates nobody
+	key, _ := ecdh.X25519().NewPrivateKey(c.PrivateKey)
 	cfg := &xr.Config{
 		DialContext:            d.DialContext,
 		Type:                   "tcp",
 		Dest:                   c.Dest,
-		PrivateKey:             c.PrivateKey,
+		PrivateKey:             key,
 		MaxTimeDiff:            c.MaxTimeDiff,
 		SessionTicketsDisabled: true,
 		ServerNames:            map[string]bool{},
