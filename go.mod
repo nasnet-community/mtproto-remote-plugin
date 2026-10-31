@@ -12,7 +12,6 @@ require (
 )
 
 require (
-	github.com/cloudflare/circl v1.6.3 // indirect
 	github.com/juju/ratelimit v1.0.2 // indirect
 	github.com/klauspost/compress v1.20.0 // indirect
 	github.com/kr/pretty v0.3.1 // indirect
