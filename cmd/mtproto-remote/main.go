@@ -97,10 +97,15 @@ func run(log *slog.Logger) error {
 		log.Warn("the datacentre address list is still the placeholder: nothing will be relayed")
 	}
 
-	// plain dials: RouterOS routes by our source address (agents domestic, the rest foreign)
-	dialer := &net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}
-	fetch := &http.Client{Timeout: 30 * time.Second}
-	download := &http.Client{Timeout: 10 * time.Minute}
+	// RouterOS sends the container out by its source address: the agents and
+	// their VPSes through the domestic link, Telegram and downloads through the
+	// foreign one. Unset (a dev run) leaves the choice to the system.
+	domestic, foreign := sourceAddr(log, "ADDR_DOMESTIC"), sourceAddr(log, "ADDR_FOREIGN")
+	toAgents, dialer := dialerFrom(domestic), dialerFrom(foreign)
+	web := http.DefaultTransport.(*http.Transport).Clone()
+	web.DialContext = dialer.DialContext
+	fetch := &http.Client{Timeout: 30 * time.Second, Transport: web}
+	download := &http.Client{Timeout: 10 * time.Minute, Transport: web}
 	allow.URL = func() string { return cidrURL }
 	allow.Client = func() *http.Client { return fetch }
 
@@ -109,7 +114,7 @@ func run(log *slog.Logger) error {
 		log.Warn("the usage history could not be read; a new one starts", "err", err)
 	}
 	mgr := manager.New(manager.Config{
-		Store: st, Allow: allow, Dial: dialer.DialContext, DialDC: dialer.DialContext,
+		Store: st, Allow: allow, Dial: toAgents.DialContext, DialDC: dialer.DialContext,
 		// usage is read often but kept in memory: the router's flash sees one write every few minutes
 		StatsEvery: 15 * time.Second, FlushEvery: 5 * time.Minute, History: hist,
 		Log: log,
@@ -122,7 +127,7 @@ func run(log *slog.Logger) error {
 		log.Warn("installing agent builds from a local folder while no agent release is pinned", "dir", local)
 	}
 	svc := relayops.NewService(relayops.ServiceConfig{
-		Store: st.Records(), Links: mgr.Links(), Admin: mgr.Admin(), SSH: relayops.NewSSH(), Log: log,
+		Store: st.Records(), Links: mgr.Links(), Admin: mgr.Admin(), SSH: relayops.NewSSHVia(toAgents.DialContext), Log: log,
 		Bins: bins,
 	})
 	page, err := ui.New(base)
@@ -160,4 +165,39 @@ func run(log *slog.Logger) error {
 	sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	return srv.Shutdown(sctx)
+}
+
+// dialerFrom dials from local, or from where the system chooses when it is
+// nil. A nil *net.TCPAddr in LocalAddr would not be a nil net.Addr.
+func dialerFrom(local *net.TCPAddr) *net.Dialer {
+	d := &net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}
+	if local != nil {
+		d.LocalAddr = local
+	}
+	return d
+}
+
+// sourceAddr is the address the variable names, for a dialer to leave from.
+// One that no interface here holds can't be bound, so it is left out with a
+// warning and the system chooses, as with none set.
+func sourceAddr(log *slog.Logger, name string) *net.TCPAddr {
+	v := strings.TrimSpace(os.Getenv(name))
+	if v == "" {
+		return nil
+	}
+	ip := net.ParseIP(v)
+	if ip == nil {
+		log.Warn("not an IP address, so the system picks the source address", "var", name, "value", v)
+		return nil
+	}
+	addrs, err := net.InterfaceAddrs()
+	if err == nil {
+		for _, a := range addrs {
+			if n, ok := a.(*net.IPNet); ok && n.IP.Equal(ip) {
+				return &net.TCPAddr{IP: ip}
+			}
+		}
+	}
+	log.Warn("no interface here holds it, so the system picks the source address", "var", name, "addr", v)
+	return nil
 }
