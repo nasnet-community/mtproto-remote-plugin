@@ -2,6 +2,7 @@ package relayops
 
 import (
 	"context"
+	"net"
 
 	"github.com/nasnet-community/mtproto-remote-plugin/ctrl"
 	"github.com/nasnet-community/mtproto-remote-plugin/installer"
@@ -11,14 +12,29 @@ import (
 // NewSSH is the real installer.
 func NewSSH() SSH { return sshInstaller{} }
 
-type sshInstaller struct{}
-
-func (sshInstaller) Fingerprint(ctx context.Context, t installer.Target) (string, error) {
-	return installer.Probe(ctx, t)
+// NewSSHVia is the real installer, reaching the VPSes through dial wherever a
+// target names no way of its own.
+func NewSSHVia(dial func(ctx context.Context, network, addr string) (net.Conn, error)) SSH {
+	return sshInstaller{dial: dial}
 }
 
-func (sshInstaller) Arch(ctx context.Context, t installer.Target) (release.Arch, error) {
-	c, err := installer.Connect(ctx, t)
+type sshInstaller struct {
+	dial func(ctx context.Context, network, addr string) (net.Conn, error)
+}
+
+func (s sshInstaller) target(t installer.Target) installer.Target {
+	if t.Dial == nil {
+		t.Dial = s.dial
+	}
+	return t
+}
+
+func (s sshInstaller) Fingerprint(ctx context.Context, t installer.Target) (string, error) {
+	return installer.Probe(ctx, s.target(t))
+}
+
+func (s sshInstaller) Arch(ctx context.Context, t installer.Target) (release.Arch, error) {
+	c, err := installer.Connect(ctx, s.target(t))
 	if err != nil {
 		return "", err
 	}
@@ -30,8 +46,8 @@ func (sshInstaller) Arch(ctx context.Context, t installer.Target) (release.Arch,
 	return f.Arch, nil
 }
 
-func (sshInstaller) Install(ctx context.Context, t installer.Target, req installer.Request, p installer.Progress) (*installer.Result, error) {
-	c, err := installer.Connect(ctx, t)
+func (s sshInstaller) Install(ctx context.Context, t installer.Target, req installer.Request, p installer.Progress) (*installer.Result, error) {
+	c, err := installer.Connect(ctx, s.target(t))
 	if err != nil {
 		return nil, err
 	}
@@ -39,8 +55,8 @@ func (sshInstaller) Install(ctx context.Context, t installer.Target, req install
 	return installer.Install(ctx, c, req, p)
 }
 
-func (sshInstaller) Uninstall(ctx context.Context, t installer.Target, p installer.Progress) error {
-	c, err := installer.Connect(ctx, t)
+func (s sshInstaller) Uninstall(ctx context.Context, t installer.Target, p installer.Progress) error {
+	c, err := installer.Connect(ctx, s.target(t))
 	if err != nil {
 		return err
 	}
@@ -48,8 +64,8 @@ func (sshInstaller) Uninstall(ctx context.Context, t installer.Target, p install
 	return installer.Uninstall(ctx, c, p)
 }
 
-func (sshInstaller) CheckCover(ctx context.Context, t installer.Target, domain string) (ctrl.DisguiseResult, bool, error) {
-	c, err := installer.Connect(ctx, t)
+func (s sshInstaller) CheckCover(ctx context.Context, t installer.Target, domain string) (ctrl.DisguiseResult, bool, error) {
+	c, err := installer.Connect(ctx, s.target(t))
 	if err != nil {
 		return ctrl.DisguiseResult{}, false, err
 	}
